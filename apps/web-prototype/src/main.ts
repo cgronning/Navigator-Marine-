@@ -33,7 +33,7 @@ const KIND_COLOR: Record<PlaceKind, string> = { marina: '#1F7A8C', fuel: '#E0A10
 const BASE_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const NOAA_CHART_WMS = 'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/NOAAChartDisplay/MapServer/exts/MaritimeChartService/WMSServer'
   + '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=0,1,2,3,4,5,6,7&STYLES=&CRS=EPSG:3857'
-  + '&BBOX={bbox-epsg-3857}&WIDTH=420&HEIGHT=420&FORMAT=image/png&TRANSPARENT=TRUE';
+  + '&BBOX={bbox-epsg-3857}&WIDTH=300&HEIGHT=300&FORMAT=image/png&TRANSPARENT=TRUE';
 
 
 const saved = store.get<{ center: [number, number]; zoom: number }>('nav.view');
@@ -245,7 +245,7 @@ function setStatus(msg: string, isError = false) {
 // ------------------------------------------------------------------ map layers on load
 map.once('style.load', () => {
   restyleBase();
-  map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 512, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
+  map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 256, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
   map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: 'visible' } });
   map.addSource('seamarks', { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256, minzoom: 6, maxzoom: 18, attribution: 'Marks © OpenSeaMap' });
   map.addLayer({ id: 'seamarks', type: 'raster', source: 'seamarks', layout: { visibility: 'none' } });
