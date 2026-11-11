@@ -136,6 +136,30 @@ export function classify(tags: Record<string, string>): PlaceKind | null {
   return null;
 }
 
+// Snapshot built into the site (refreshed weekly by the publishing workflow).
+let snapshot: Promise<{ fetchedAt: string; places: Place[] } | null> | null = null;
+export function placesSnapshot() {
+  if (!snapshot) {
+    snapshot = getJson<{ fetchedAt: string; error: string | null; elements: OverpassEl[] }>('./places.json', undefined, 20000)
+      .then((r) => (r.error || !r.elements.length ? null : { fetchedAt: r.fetchedAt, places: toPlaces(r.elements) }))
+      .catch(() => null);
+  }
+  return snapshot;
+}
+
+function toPlaces(elements: OverpassEl[]): Place[] {
+  const out: Place[] = [];
+  for (const el of elements) {
+    const tags = el.tags ?? {};
+    const kind = classify(tags);
+    const lat = el.lat ?? el.center?.lat;
+    const lon = el.lon ?? el.center?.lon;
+    if (!kind || lat === undefined || lon === undefined) continue;
+    out.push({ id: `${el.type}/${el.id}`, kind, name: tags['name'] ?? tags['seamark:name'] ?? `Unnamed ${KIND_LABEL[kind].toLowerCase()}`, lat, lon, tags });
+  }
+  return out;
+}
+
 export async function fetchPlaces(bbox: { s: number; w: number; n: number; e: number }, kinds: PlaceKind[]): Promise<Place[]> {
   if (kinds.length === 0) return [];
   const b = `${bbox.s.toFixed(4)},${bbox.w.toFixed(4)},${bbox.n.toFixed(4)},${bbox.e.toFixed(4)}`;
@@ -151,14 +175,5 @@ export async function fetchPlaces(bbox: { s: number; w: number; n: number; e: nu
     } catch (e) { lastErr = e; }
   }
   if (!r) throw lastErr ?? new Error('Places unavailable');
-  const out: Place[] = [];
-  for (const el of r.elements) {
-    const tags = el.tags ?? {};
-    const kind = classify(tags);
-    const lat = el.lat ?? el.center?.lat;
-    const lon = el.lon ?? el.center?.lon;
-    if (!kind || lat === undefined || lon === undefined) continue;
-    out.push({ id: `${el.type}/${el.id}`, kind, name: tags['name'] ?? tags['seamark:name'] ?? `Unnamed ${KIND_LABEL[kind].toLowerCase()}`, lat, lon, tags });
-  }
-  return out;
+  return toPlaces(r.elements);
 }

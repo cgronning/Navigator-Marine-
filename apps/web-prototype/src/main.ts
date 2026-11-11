@@ -3,7 +3,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import { inverse, METRES_PER_NM, etaHours } from '../../../packages/core/src/geo/nav.ts';
 import {
-  fetchConditions, nearestTideStation, tidePredictions, fetchPlaces,
+  fetchConditions, nearestTideStation, tidePredictions, fetchPlaces, placesSnapshot,
   KIND_LABEL, type Place, type PlaceKind, type LatLon, type HourRow,
 } from './data.ts';
 
@@ -182,6 +182,7 @@ const placeCache = new Map<string, Place[]>();
 let placeTimer: number | undefined;
 let placeReq = 0;
 const MIN_PLACE_ZOOM = 10;
+const SNAP = { s: 40.4, w: -74.5, n: 43.1, e: -69.8 }; // must match scripts/fetch-places.mjs
 
 function setPlacesData() {
   const src = map.getSource('places') as GeoJSONSource | undefined;
@@ -209,8 +210,14 @@ function loadPlaces(immediate = false) {
     try {
       let result = placeCache.get(key);
       if (!result) {
-        setStatus('Loading places…');
-        result = await fetchPlaces(box, kinds);
+        const snap = await placesSnapshot();
+        const inSnap = snap && SNAP.s <= box.s && SNAP.w <= box.w && SNAP.n >= box.n && SNAP.e >= box.e;
+        if (snap && (inSnap || !navigator.onLine)) {
+          result = snap.places.filter((p) => kinds.includes(p.kind) && p.lat >= box.s && p.lat <= box.n && p.lon >= box.w && p.lon <= box.e);
+        } else {
+          setStatus('Loading places…');
+          result = await fetchPlaces(box, kinds);
+        }
         placeCache.set(key, result);
       }
       if (req !== placeReq) return;

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '17 9 * * 1'   # weekly refresh of the places snapshot (Mondays)
 
 permissions:
   contents: read
@@ -28,6 +30,9 @@ jobs:
       - name: Install
         working-directory: apps/web-prototype
         run: npm ci
+      - name: Download places snapshot (OpenStreetMap)
+        working-directory: apps/web-prototype
+        run: node scripts/fetch-places.mjs
       - name: Build
         working-directory: apps/web-prototype
         run: npm run build
