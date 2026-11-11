@@ -188,6 +188,8 @@ async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions,
     return { idx: best, movedM: bestD * cell };
   };
   const a = snap(start), b = snap(end);
+  const dbg = (globalThis as unknown as { __routeDebug?: unknown[] }).__routeDebug;
+  if (dbg) dbg.push({ W, H, cell, free: free.slice(), clr: clr.slice(), a: a.idx, b: b.idx, counts: perScale.map((p) => [p.depth?.length ?? -1, p.land.length, p.hazards.length]) });
 
   // ---- A* (8-connected) with a penalty for hugging hazards
   onProgress('Finding the shortest safe route…');
