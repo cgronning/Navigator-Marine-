@@ -9,6 +9,9 @@ import {
 import { rocksInView, depthAt, WATLEV_LABEL, type Rock } from './enc.ts';
 import { WindLayer, fetchWindGrid, speedColor, LEGEND_STOPS } from './wind.ts';
 import { BoatTracker } from './boat.ts';
+import { coastalRoute, RouteError } from './router-coastal.ts';
+import { passageRoute } from './router-weather.ts';
+import { fetchCurrentGrid, currentColor, CURRENT_LEGEND, nearestCurrent } from './currents.ts';
 
 // ------------------------------------------------------------------ helpers
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -154,7 +157,10 @@ function setTab(t: Tab) {
   $('#hint').textContent = t === 'navigate' ? 'Tap the map to add waypoints' : 'Tap the water for conditions';
   document.body.dataset.tab = t;
   if (t === 'services') renderServices();
-  if (t === 'navigate') renderRoute();
+  if (t === 'navigate') { renderRoute(); setRMode(rmode); }
+  else drawEnds();
+  const manualVisible = t === 'navigate' && rmode === 'manual';
+  if (map.getLayer('route-line')) { map.setLayoutProperty('route-line', 'visibility', manualVisible ? 'visible' : 'none'); map.setLayoutProperty('route-pts', 'visibility', manualVisible ? 'visible' : 'none'); }
   setTimeout(() => map.resize(), 0);
 }
 document.querySelectorAll<HTMLButtonElement>('.tabbar button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab as Tab)));
@@ -165,6 +171,7 @@ document.querySelectorAll<HTMLInputElement>('[data-layer]').forEach((cb) => {
   cb.addEventListener('change', () => {
     if (key === 'seamarks') { map.setLayoutProperty('seamarks', 'visibility', cb.checked ? 'visible' : 'none'); return; }
     if (key === 'wind') { setWind(cb.checked); return; }
+    if (key === 'currents') { setCurrents(cb.checked); return; }
     if (key === 'rocks') { setRocks(cb.checked); return; }
     const k = key as PlaceKind;
     if (cb.checked) enabledKinds.add(k); else enabledKinds.delete(k);
@@ -260,6 +267,11 @@ map.once('style.load', () => {
   }, 'places');
   map.addSource('course', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addLayer({ id: 'course', type: 'line', source: 'course', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#0B1F3F', 'line-width': 3 } });
+  map.addSource('autoroute', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: 'autoroute-casing', type: 'line', source: 'autoroute', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#FFFFFF', 'line-width': 7, 'line-opacity': 0.9 } });
+  map.addLayer({ id: 'autoroute', type: 'line', source: 'autoroute', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': 4 } });
+  map.addSource('ends', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: 'ends', type: 'circle', source: 'ends', paint: { 'circle-radius': 9, 'circle-color': ['match', ['get', 'role'], 'start', '#1E8E5A', '#C8322B'], 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 3 } });
   map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addLayer({ id: 'route-line', type: 'line', source: 'route', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#0B1F3F', 'line-width': 3, 'line-dasharray': [2, 1.5] } });
   map.addLayer({ id: 'route-pts', type: 'circle', source: 'route', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 7, 'circle-color': '#FBF8F1', 'circle-stroke-color': '#0B1F3F', 'circle-stroke-width': 3 } });
@@ -286,7 +298,11 @@ map.on('click', (e: MapMouseEvent) => {
     if (p) { showPlace(p); return; }
   }
   const pt = { lat: e.lngLat.lat, lon: e.lngLat.lng };
-  if (tab === 'navigate') { route.push(pt); store.set('nav.route', route); drawRoute(); renderRoute(); return; }
+  if (tab === 'navigate') {
+    if (rmode === 'manual') { route.push(pt); store.set('nav.route', route); drawRoute(); renderRoute(); }
+    else addEnd(pt);
+    return;
+  }
   if (tab === 'explore') showConditions(pt);
 });
 
@@ -333,7 +349,14 @@ async function showConditions(p: LatLon) {
     html += `<p class="err">Couldn’t load the forecast right now. Check your connection and tap again.</p>`;
   }
   const depthHtml = document.getElementById('depth-block')?.outerHTML;
-  body.innerHTML = html + `<div id="tides"><div class="loading">Finding nearest NOAA tide station…</div></div>`;
+  body.innerHTML = html + `<div id="tides"><div class="loading">Finding nearest NOAA tide station…</div></div><div id="tcurrents"></div>`;
+  nearestCurrent(p).then((c) => {
+    const el = document.getElementById('tcurrents'); if (!el || !c) return;
+    const up = c.events.filter((x) => Date.parse(x.time.replace(' ', 'T')) >= Date.now() - 30 * 60e3).slice(0, 4);
+    el.innerHTML = `<h3>Tidal current · ${esc(c.station.name)} <small>${c.distNm.toFixed(1)} nm away</small></h3>
+      <div class="tides">${up.map((x) => `<div class="tide cur-${x.type}"><small>${x.type === 'slack' ? 'Slack' : x.type === 'flood' ? 'Max flood' : 'Max ebb'}</small><b>${new Date(x.time.replace(' ', 'T')).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</b><small>${x.type === 'slack' ? '&nbsp;' : `${x.speedKn.toFixed(1)} kn${x.dirDeg !== null ? ` → ${Math.round(x.dirDeg)}°` : ''}`}</small></div>`).join('')}</div>
+      <p class="src">NOAA tidal current predictions (station ${esc(c.station.id)}).</p>`;
+  }).catch(() => { /* no station nearby or service down: show nothing */ });
   if (depthHtml && depthDone) { const el = document.getElementById('depth-block'); if (el) el.outerHTML = depthHtml; }
 
   const tidesEl = $('#tides');
@@ -502,64 +525,177 @@ function showRock(r: Rock) {
   openSheet('sheet-detail');
 }
 
-// ------------------------------------------------------------------ wind (animated, PredictWind-style)
-let windOn = false;
-let wind: WindLayer | null = null;
-let windTimer: number | undefined;
-let windKey = '';
+// ------------------------------------------------------------------ wind + currents (animated, PredictWind-style), one shared time slider
+let windOn = false, curOn = false;
+let wind: WindLayer | null = null, cur: WindLayer | null = null;
+let flowTimer: number | undefined;
+let windKey = '', curKey = '';
 const windSlider = $('#wind-slider') as HTMLInputElement;
-$('#wind-legend').innerHTML = LEGEND_STOPS.map((k) => `<span style="--c:${speedColor(k)}">${k}</span>`).join('') + '<em>kn</em>';
+function renderLegends() {
+  const parts: string[] = [];
+  if (windOn) parts.push(`<div class="legend"><b class="lg-l">Wind</b>${LEGEND_STOPS.map((k) => `<span style="--c:${speedColor(k)}">${k}</span>`).join('')}<em>kn</em></div>`);
+  if (curOn) parts.push(`<div class="legend"><b class="lg-l">Current</b>${CURRENT_LEGEND.map((k) => `<span style="--c:${currentColor(k)}">${k}</span>`).join('')}<em>kn</em></div>`);
+  $('#wind-legend').innerHTML = parts.join('');
+  $('#wind-src').textContent = [windOn && 'Wind', curOn && 'Currents'].filter(Boolean).join(' + ') + ' · Open-Meteo forecast';
+}
 function windLabel(iso: string) {
   const d = new Date(iso);
   if (Math.abs(d.getTime() - Date.now()) < 45 * 60e3) return 'Now';
   return d.toLocaleString([], { weekday: 'short', hour: 'numeric' });
 }
-function setWindTimeIndexToNow() {
-  if (!wind) return;
-  const times = wind.times; if (!times.length) return;
+const flowTimes = () => (windOn && wind?.times.length ? wind.times : curOn && cur?.times.length ? cur.times : []);
+function applyTime() {
+  const i = Number(windSlider.value);
+  wind?.setTime(i); cur?.setTime(i);
+  const t = flowTimes().at(i); $('#wind-time').textContent = t ? windLabel(t) : 'Now';
+}
+function setTimeIndexToNow() {
+  const times = flowTimes(); if (!times.length) return;
   let idx = times.findIndex((t) => Date.parse(t) >= Date.now() - 30 * 60e3); if (idx < 0) idx = 0;
   windSlider.min = String(idx); windSlider.max = String(Math.min(times.length - 1, idx + 47));
   if (Number(windSlider.value) < idx || Number(windSlider.value) > Number(windSlider.max)) windSlider.value = String(idx);
-  wind.setTime(Number(windSlider.value)); $('#wind-time').textContent = windLabel(times.at(Number(windSlider.value))!);
+  applyTime();
 }
-windSlider.addEventListener('input', () => { if (!wind) return; wind.setTime(Number(windSlider.value)); $('#wind-time').textContent = windLabel(wind.times.at(Number(windSlider.value)) ?? ''); });
-async function loadWind() {
-  if (!windOn) return;
-  const b = map.getBounds();
-  const key = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map((v) => v.toFixed(1)).join(',') + Math.round(map.getZoom());
-  if (key === windKey) return;
-  try {
-    $('#wind-src').textContent = 'Loading forecast…';
-    const g = await fetchWindGrid({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
-    windKey = key;
-    wind?.setGrid(g); setWindTimeIndexToNow();
-    $('#wind-src').textContent = 'Forecast wind · Open-Meteo';
-  } catch { $('#wind-src').textContent = 'Couldn’t load wind forecast'; }
+windSlider.addEventListener('input', applyTime);
+const viewKey = () => { const b = map.getBounds(); return [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map((v) => v.toFixed(1)).join(',') + Math.round(map.getZoom()); };
+const viewBox = () => { const b = map.getBounds(); return { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() }; };
+async function loadFlows() {
+  const key = viewKey();
+  if (windOn && key !== windKey) {
+    try { const g = await fetchWindGrid(viewBox()); windKey = key; wind?.setGrid(g); setTimeIndexToNow(); }
+    catch { $('#wind-src').textContent = 'Couldn’t load wind forecast'; }
+  }
+  if (curOn && key !== curKey) {
+    try { const g = await fetchCurrentGrid(viewBox()); curKey = key; cur?.setGrid(g); setTimeIndexToNow(); }
+    catch { $('#wind-src').textContent = 'Couldn’t load current forecast'; }
+  }
+}
+function updateFlowUi() {
+  const any = windOn || curOn;
+  $('#wind-bar').hidden = !any;
+  document.body.classList.toggle('wind-on', any);
+  renderLegends(); syncToggles();
 }
 function setWind(on: boolean) {
-  windOn = on; syncToggles();
-  $('#wind-bar').hidden = !on;
-  document.body.classList.toggle('wind-on', on);
-  if (on) { if (!wind) wind = new WindLayer(map, $('#map')); wind.start(); windKey = ''; loadWind(); }
-  else wind?.stop();
+  windOn = on;
+  if (on) { if (!wind) wind = new WindLayer(map, $('#map')); wind.start(); windKey = ''; loadFlows(); } else wind?.stop();
+  updateFlowUi();
 }
-map.on('moveend', () => { window.clearTimeout(windTimer); if (windOn) windTimer = window.setTimeout(loadWind, 700); });
+function setCurrents(on: boolean) {
+  curOn = on;
+  if (on) { if (!cur) cur = new WindLayer(map, $('#map'), { color: currentColor, pxPerKn: 1.1, density: 0.8 }); cur.start(); curKey = ''; loadFlows(); } else cur?.stop();
+  updateFlowUi();
+}
+map.on('moveend', () => { window.clearTimeout(flowTimer); if (windOn || curOn) flowTimer = window.setTimeout(loadFlows, 700); });
 
 // ------------------------------------------------------------------ quick toggles
 let placesOn = true;
 function syncToggles() {
-  const state: Record<string, boolean> = { wind: windOn, rocks: rocksOn, places: placesOn };
+  const state: Record<string, boolean> = { wind: windOn, currents: curOn, rocks: rocksOn, places: placesOn };
   document.querySelectorAll<HTMLButtonElement>('[data-quick]').forEach((b) => { const on = state[b.dataset.quick!] ?? false; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
-  const w = document.querySelector<HTMLInputElement>('[data-layer="wind"]'); if (w) w.checked = windOn;
-  const r = document.querySelector<HTMLInputElement>('[data-layer="rocks"]'); if (r) r.checked = rocksOn;
+  for (const k of ['wind', 'currents', 'rocks'] as const) { const el = document.querySelector<HTMLInputElement>(`[data-layer="${k}"]`); if (el) el.checked = state[k]!; }
 }
 document.querySelectorAll<HTMLButtonElement>('[data-quick]').forEach((b) => b.addEventListener('click', () => {
   const k = b.dataset.quick!;
   if (k === 'wind') setWind(!windOn);
+  else if (k === 'currents') setCurrents(!curOn);
   else if (k === 'rocks') setRocks(!rocksOn);
   else if (k === 'places') { placesOn = !placesOn; if (map.getLayer('places')) map.setLayoutProperty('places', 'visibility', placesOn ? 'visible' : 'none'); syncToggles(); }
 }));
 map.once('style.load', () => { if (rocksOn) setRocks(true); });
+
+// ------------------------------------------------------------------ auto routing (hazard-avoiding) and passage weather routing
+type RMode = 'manual' | 'auto' | 'passage';
+let rmode: RMode = (store.get<RMode>('nav.rmode') ?? 'auto');
+let ends: LatLon[] = [];
+let routeBusy = false;
+function setRMode(m: RMode) {
+  rmode = m; store.set('nav.rmode', m);
+  document.querySelectorAll<HTMLButtonElement>('[data-rmode]').forEach((b) => b.classList.toggle('on', b.dataset.rmode === m));
+  document.querySelectorAll<HTMLElement>('[data-rpane]').forEach((el) => { el.hidden = el.dataset.rpane !== m && !(el.dataset.rpane === 'ends' && m !== 'manual'); });
+  $('#hint').textContent = m === 'manual' ? 'Tap the map to add waypoints' : ends.length === 0 ? 'Tap your starting point' : ends.length === 1 ? 'Now tap your destination' : 'Tap to set a new start';
+  drawEnds();
+}
+document.querySelectorAll<HTMLButtonElement>('[data-rmode]').forEach((b) => b.addEventListener('click', () => setRMode(b.dataset.rmode as RMode)));
+function drawEnds() {
+  const src = map.getSource('ends') as GeoJSONSource | undefined; if (!src) return;
+  const show = tab === 'navigate' && rmode !== 'manual';
+  src.setData({ type: 'FeatureCollection', features: show ? ends.map((p, i) => ({ type: 'Feature', properties: { role: i === 0 ? 'start' : 'end' }, geometry: { type: 'Point', coordinates: [p.lon, p.lat] } })) : [] });
+  $('#ends-text').textContent = ends.length === 0 ? 'Tap the map to set your start.' : ends.length === 1 ? 'Start set. Now tap your destination.' : `Start → destination: ${distanceNmShort(ends[0]!, ends[1]!)} nm straight line.`;
+}
+const distanceNmShort = (a: LatLon, b: LatLon) => (inverse(a, b).distanceM / METRES_PER_NM).toFixed(1);
+function setAutoRoute(fc: GeoJSON.FeatureCollection) { (map.getSource('autoroute') as GeoJSONSource | undefined)?.setData(fc); }
+function clearAuto() { ends = []; setAutoRoute({ type: 'FeatureCollection', features: [] }); $('#auto-result').innerHTML = ''; $('#passage-result').innerHTML = ''; drawEnds(); setRMode(rmode); }
+document.querySelectorAll<HTMLButtonElement>('[data-clear-ends]').forEach((b) => b.addEventListener('click', clearAuto));
+function addEnd(p: LatLon) {
+  if (ends.length >= 2) { ends = []; setAutoRoute({ type: 'FeatureCollection', features: [] }); }
+  ends.push(p); drawEnds(); setRMode(rmode);
+  if (ends.length === 2) { if (rmode === 'auto') runAuto(); }
+}
+function fitTo(points: LatLon[]) {
+  const lats = points.map((p) => p.lat), lons = points.map((p) => p.lon);
+  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: { top: 140, bottom: window.innerHeight * 0.5, left: 40, right: 40 }, duration: 800, maxZoom: 14 });
+}
+function boatDraftFt(): number { const b = store.get<{ draft?: string }>('nav.boat'); const d = Number(b?.draft); return d > 0 ? d : 6; }
+($('#auto-draft') as HTMLInputElement).value = String(boatDraftFt());
+
+async function runAuto() {
+  if (ends.length < 2 || routeBusy) return;
+  routeBusy = true;
+  const out = $('#auto-result');
+  const draftFt = Number(($('#auto-draft') as HTMLInputElement).value) || 6;
+  const marginFt = Number(($('#auto-margin') as HTMLInputElement).value) || 0;
+  out.innerHTML = `<div class="loading" id="auto-progress">Starting…</div>`;
+  try {
+    const r = await coastalRoute(ends[0]!, ends[1]!, { draftFt, marginFt, hazardBufferM: 50 }, (m) => { const el = document.getElementById('auto-progress'); if (el) el.textContent = m; });
+    setAutoRoute({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { color: '#0B1F3F' }, geometry: { type: 'LineString', coordinates: r.path.map((p) => [p.lon, p.lat]) } }] });
+    fitTo(r.path);
+    const speed = Number(($('#route-speed') as HTMLInputElement).value) || 6;
+    const h = r.distanceNm / speed;
+    out.innerHTML = `<div class="totals"><div><b>${r.distanceNm.toFixed(1)} nm</b><small>Route</small></div><div><b>${Math.floor(h)} h ${Math.round((h % 1) * 60)} m</b><small>at ${speed} kn</small></div><div><b>${r.shallowestFt === null ? '—' : `${Math.round(r.shallowestFt)} ft`}</b><small>Shallowest area</small></div></div>
+      <p class="fine">Keeps water at least ${draftFt + marginFt} ft deep on the chart (your ${draftFt} ft draft + ${marginFt} ft margin) and stays about 50 m clear of charted rocks, wrecks and obstructions. ${r.path.length - 1} legs.
+      ${r.snapped.start > 30 || r.snapped.end > 30 ? `<br>Start/end were ${Math.round(Math.max(r.snapped.start, r.snapped.end))} m from deep-enough water; the dashed-in final stretch isn't checked.` : ''}</p>
+      <p class="fine warn-text">Planning aid only. Charted depths are at low tide and can be out of date. Check the route against the chart and keep watch.</p>`;
+  } catch (e) {
+    out.innerHTML = `<p class="err">${esc(e instanceof RouteError || e instanceof Error ? e.message : 'Routing failed')}</p>`;
+  } finally { routeBusy = false; }
+}
+$('#auto-go').addEventListener('click', runAuto);
+
+const dep = $('#passage-depart') as HTMLInputElement;
+{ const d = new Date(Date.now() + 3600e3); d.setMinutes(0, 0, 0); dep.value = new Date(d.getTime() - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); }
+async function runPassage() {
+  if (ends.length < 2) { $('#passage-result').innerHTML = `<p class="fine">Tap a start and a destination first. Use search to jump to far-away places.</p>`; return; }
+  if (routeBusy) return;
+  routeBusy = true;
+  const out = $('#passage-result');
+  out.innerHTML = `<div class="loading" id="passage-progress">Starting…</div>`;
+  const motorOn = ($('#passage-motor') as HTMLInputElement).checked;
+  const opt = { departure: new Date(dep.value), motorBelowKn: motorOn ? Number(($('#passage-motor-kn') as HTMLInputElement).value) || 6 : null, motorSpeedKn: 6.5, efficiency: 0.85, maxWindKn: 25 };
+  try {
+    const r = await passageRoute(ends[0]!, ends[1]!, opt, (m) => { const el = document.getElementById('passage-progress'); if (el) el.textContent = m; });
+    const feats: GeoJSON.Feature[] = [];
+    for (let i = 1; i < r.points.length; i++) {
+      const a = r.points[i - 1]!, b = r.points[i]!;
+      feats.push({ type: 'Feature', properties: { color: speedColor(a.twsKn) }, geometry: { type: 'LineString', coordinates: [[a.lon, a.lat], [b.lon, b.lat]] } });
+    }
+    setAutoRoute({ type: 'FeatureCollection', features: feats });
+    fitTo(r.points);
+    const arrive = new Date(r.points.at(-1)!.t);
+    const days = r.hours / 24;
+    const rows = r.points.filter((_, i) => i % Math.max(1, Math.round(12 / Math.max(1, r.hours / Math.max(1, r.points.length - 1)))) === 0 || i === r.points.length - 1);
+    out.innerHTML = `<div class="totals"><div><b>${days >= 1 ? `${days.toFixed(1)} days` : `${r.hours.toFixed(1)} h`}</b><small>${r.arrived ? 'Passage time' : 'Partial'}</small></div><div><b>${Math.round(r.distanceNm)} nm</b><small>Sailed</small></div><div><b>${Math.round(r.maxTws)} kn</b><small>Max wind</small></div></div>
+      ${r.arrived ? `<p class="fine">Arrive about <b>${arrive.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric' })}</b>. ${r.strongHours ? `<span class="warn-text">About ${r.strongHours} h in 25+ kn wind.</span>` : 'No forecast winds of 25 kn or more along the route.'} ${r.motorHours ? `Motoring about ${r.motorHours} h in light air.` : ''}</p>` : `<p class="err">${esc(r.note ?? '')}</p>`}
+      <table class="legs"><thead><tr><th>When</th><th>Wind</th><th>Angle</th><th>Boat</th><th>Current</th></tr></thead><tbody>
+      ${rows.map((p) => `<tr><td>${new Date(p.t).toLocaleString([], { weekday: 'short', hour: 'numeric' })}</td><td>${Math.round(p.twsKn)} kn ${compass(p.twdDeg)}</td><td>${Math.round(p.twaDeg)}°${p.twaDeg < 60 ? ' up' : p.twaDeg > 130 ? ' down' : ''}</td><td>${p.motoring ? 'motor' : `${p.boatKn.toFixed(1)} kn`}</td><td>${p.curKn.toFixed(1)} kn</td></tr>`).join('')}
+      </tbody></table>
+      <p class="fine">Route line is coloured by wind speed. Uses a generic 50 ft cruising sailboat performance table at 85%, ${r.currentIncluded ? 'ocean currents (incl. Gulf Stream)' : 'no currents (unavailable)'}, and avoids land. Forecasts beyond 5–7 days are uncertain: recheck before departure.</p>
+      <p class="fine warn-text">Planning aid only. Not a substitute for a professional weather router, official forecasts, or skipper judgement.</p>`;
+  } catch (e) {
+    out.innerHTML = `<p class="err">${esc(e instanceof Error ? e.message : 'Routing failed')}</p>`;
+  } finally { routeBusy = false; }
+}
+$('#passage-go').addEventListener('click', runPassage);
 
 // ------------------------------------------------------------------ my boat (triangle + course line)
 const boat = new BoatTracker(map);
@@ -579,4 +715,5 @@ $('#btn-boat').addEventListener('click', async () => {
 
 renderBoat();
 syncToggles();
+setRMode(rmode);
 setTab('explore');

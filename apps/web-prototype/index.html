@@ -22,6 +22,7 @@
     <div class="search-results glass" id="search-results" hidden></div>
     <div class="quick" role="group" aria-label="Quick layers">
       <button class="qchip glass" data-quick="wind" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h8"/></svg>Wind</button>
+      <button class="qchip glass" data-quick="currents" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 9c3-3 6 3 9 0s6 3 9 0M3 15c3-3 6 3 9 0s6 3 9 0"/></svg>Currents</button>
       <button class="qchip glass" data-quick="rocks" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 18 9 9l4 5 2-3 5 7Z"/></svg>Rocks</button>
       <button class="qchip glass on" data-quick="places" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11a7 7 0 1 1 14 0c0 4.8-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>Marinas</button>
     </div>
@@ -44,6 +45,7 @@
       <div class="layer-list">
         <label class="toggle"><input type="checkbox" data-layer="seamarks" /><span class="sw"></span><span><b>Extra marks (OpenSeaMap)</b><small>Community buoy/light data; the NOAA chart already shows official marks</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="wind" /><span class="sw"></span><span><b>Wind (animated)</b><small>Forecast wind streaks, coloured by speed</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="currents" /><span class="sw"></span><span><b>Currents (animated)</b><small>Ocean and tidal current forecast</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="rocks" /><span class="sw"></span><span><b><i class="dot" style="--c:#F26B1D"></i>Rocks in orange</b><small>From NOAA chart data · zoom in to harbor level</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="marina" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#1F7A8C"></i>Marinas</b><small>OpenStreetMap · unverified</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="fuel" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#E0A100"></i>Fuel docks</b><small>OpenStreetMap · unverified</small></span></label>
@@ -64,13 +66,45 @@
     <!-- Tab panels -->
     <section class="panel" id="panel-navigate" hidden>
       <div class="panel-head"><h2>Plan a route</h2><span class="badge warn">Planning aid only</span></div>
-      <p class="fine">Tap the map to add waypoints. Not for navigation; always check official charts.</p>
-      <div class="row">
-        <label class="field small">Speed (kn)<input id="route-speed" type="number" inputmode="decimal" min="0.5" max="60" step="0.5" value="6" /></label>
-        <button class="btn ghost" id="route-undo">Undo</button>
-        <button class="btn ghost" id="route-clear">Clear</button>
+      <div class="seg" role="tablist">
+        <button data-rmode="auto">Auto</button>
+        <button data-rmode="passage">Passage</button>
+        <button data-rmode="manual">Manual</button>
       </div>
-      <div id="route-summary"></div>
+      <div data-rpane="ends"><p class="fine" id="ends-text">Tap the map to set your start.</p></div>
+
+      <div data-rpane="auto">
+        <p class="fine">Finds the shortest route that stays in water deep enough for your boat and keeps clear of charted rocks, wrecks and obstructions. Up to 60 nm.</p>
+        <div class="row">
+          <label class="field small">Draft (ft)<input id="auto-draft" type="number" inputmode="decimal" min="0.5" max="30" step="0.5" value="6" /></label>
+          <label class="field small">Safety margin (ft)<input id="auto-margin" type="number" inputmode="decimal" min="0" max="20" step="0.5" value="3" /></label>
+        </div>
+        <div class="row"><button class="btn" id="auto-go">Find safe route</button><button class="btn ghost" data-clear-ends>Clear</button></div>
+        <div id="auto-result"></div>
+      </div>
+
+      <div data-rpane="passage" hidden>
+        <p class="fine">Weather routing for offshore passages (e.g. Newport → BVI): picks the fastest route through the forecast wind and ocean currents, avoiding land.</p>
+        <div class="row">
+          <label class="field">Departure<input id="passage-depart" type="datetime-local" /></label>
+        </div>
+        <label class="toggle"><input type="checkbox" id="passage-motor" checked /><span class="sw"></span><span><b>Motor in light air</b><small>Motor at 6.5 kn when wind is below the value set</small></span></label>
+        <div class="row">
+          <label class="field small">Motor below (kn wind)<input id="passage-motor-kn" type="number" inputmode="decimal" min="0" max="15" step="1" value="6" /></label>
+        </div>
+        <div class="row"><button class="btn" id="passage-go">Calculate passage</button><button class="btn ghost" data-clear-ends>Clear</button></div>
+        <div id="passage-result"></div>
+      </div>
+
+      <div data-rpane="manual" hidden>
+        <p class="fine">Tap the map to add waypoints yourself.</p>
+        <div class="row">
+          <label class="field small">Speed (kn)<input id="route-speed" type="number" inputmode="decimal" min="0.5" max="60" step="0.5" value="6" /></label>
+          <button class="btn ghost" id="route-undo">Undo</button>
+          <button class="btn ghost" id="route-clear">Clear</button>
+        </div>
+        <div id="route-summary"></div>
+      </div>
     </section>
 
     <section class="panel" id="panel-vessels" hidden>

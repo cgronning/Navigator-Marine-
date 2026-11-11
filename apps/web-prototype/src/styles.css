@@ -198,3 +198,13 @@ body.wind-on .maplibregl-ctrl-bottom-right, body.wind-on .fab, body.wind-on .rea
 .depth-main.shallow { background: #FDECDF; }
 .depth-main.shallow > b { color: #B4480F; }
 .depth .src { margin: 6px 2px 0; }
+
+.seg { display: flex; background: var(--cream-100); border-radius: 12px; padding: 4px; gap: 2px; margin: 4px 0 8px; }
+.seg button { flex: 1; min-height: 42px; border: 0; border-radius: 9px; background: none; font-weight: 600; font-size: 14px; color: var(--navy-700); cursor: pointer; }
+.seg button.on { background: var(--navy-900); color: var(--cream-50); }
+.warn-text { color: #9A5B00; }
+.lg-l { flex: none; width: 54px; font-size: 11px; color: var(--navy-700); }
+.legend + .legend { margin-top: 4px; }
+.tide.cur-flood { border-top-color: #1F7A8C; } .tide.cur-ebb { border-top-color: #6B5CA5; } .tide.cur-slack { border-top-color: #CBD2DD; }
+.legs td, .legs th { white-space: nowrap; }
+#passage-result, #auto-result { overflow-x: auto; }

@@ -88,7 +88,7 @@ export class WindLayer {
   private running = false;
   private moving = false;
 
-  constructor(private map: maplibregl.Map, container: HTMLElement) {
+  constructor(private map: maplibregl.Map, container: HTMLElement, private opts: { color: (kn: number, a?: number) => string; pxPerKn: number; density?: number } = { color: speedColor, pxPerKn: 0.072 }) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'wind-canvas';
     container.appendChild(this.canvas);
@@ -117,7 +117,7 @@ export class WindLayer {
   private clear() { this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height); }
   private seed() {
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
-    const n = Math.round(Math.min(1400, (w * h) / 450));
+    const n = Math.round(Math.min(1400, (w * h) / 450) * (this.opts.density ?? 1));
     this.particles = Array.from({ length: n }, () => ({ x: Math.random() * w, y: Math.random() * h, age: Math.floor(Math.random() * 80) }));
   }
   private loop = () => {
@@ -132,13 +132,13 @@ export class WindLayer {
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineWidth = 2.2;
     ctx.lineCap = 'round';
-    const k = 0.045; // pixels per frame per knot (visual only)
+    const k = this.opts.pxPerKn; // pixels per frame per knot (visual only)
     for (const p of this.particles) {
       const ll = this.map.unproject([p.x, p.y]);
       const s = sample(this.grid, this.t, ll.lat, ll.lng);
       if (!s || p.age > 90) { p.x = Math.random() * w; p.y = Math.random() * h; p.age = 0; continue; }
-      const nx = p.x + s.u * k * 1.6, ny = p.y - s.v * k * 1.6;
-      ctx.strokeStyle = speedColor(s.kn, 0.9);
+      const nx = p.x + s.u * k, ny = p.y - s.v * k;
+      ctx.strokeStyle = this.opts.color(s.kn, 0.9);
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(nx, ny); ctx.stroke();
       p.x = nx; p.y = ny; p.age++;
       if (p.x < 0 || p.x > w || p.y < 0 || p.y > h) { p.x = Math.random() * w; p.y = Math.random() * h; p.age = 0; }
