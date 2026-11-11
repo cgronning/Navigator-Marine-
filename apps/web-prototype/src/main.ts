@@ -6,6 +6,9 @@ import {
   fetchConditions, nearestTideStation, tidePredictions, fetchPlaces, placesSnapshot,
   KIND_LABEL, type Place, type PlaceKind, type LatLon, type HourRow,
 } from './data.ts';
+import { rocksInView, depthAt, WATLEV_LABEL, type Rock } from './enc.ts';
+import { WindLayer, fetchWindGrid, speedColor, LEGEND_STOPS } from './wind.ts';
+import { BoatTracker } from './boat.ts';
 
 // ------------------------------------------------------------------ helpers
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -29,8 +32,6 @@ const NOAA_CHART_WMS = 'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS
   + '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=0,1,2,3,4,5,6,7&STYLES=&CRS=EPSG:3857'
   + '&BBOX={bbox-epsg-3857}&WIDTH=512&HEIGHT=512&FORMAT=image/png&TRANSPARENT=TRUE';
 
-type Mode = 'chart' | 'map';
-let mode: Mode = store.get<Mode>('nav.mode') ?? 'chart';
 
 const saved = store.get<{ center: [number, number]; zoom: number }>('nav.view');
 function fatal(msg: string) {
@@ -84,16 +85,8 @@ window.setTimeout(() => { if (!baseLoaded) setStatus('The map hasn’t loaded ye
 
 map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Chart: NOAA ENC® (not for navigation) · Weather: <a href="https://open-meteo.com">Open-Meteo</a> · Tides: NOAA' }), 'bottom-left');
 if (window.matchMedia('(pointer: fine)').matches) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
-map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'bottom-right');
 map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-right');
 
-function setMode(m: Mode) {
-  mode = m;
-  store.set('nav.mode', m);
-  document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => { b.classList.toggle('on', b.dataset.mode === m); b.setAttribute('aria-selected', String(b.dataset.mode === m)); });
-  if (map.getLayer('chart')) map.setLayoutProperty('chart', 'visibility', m === 'chart' ? 'visible' : 'none');
-}
-document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode as Mode)));
 
 // ------------------------------------------------------------------ search (OpenStreetMap Nominatim + loaded places)
 const searchInput = $('#search') as HTMLInputElement;
@@ -171,6 +164,8 @@ document.querySelectorAll<HTMLInputElement>('[data-layer]').forEach((cb) => {
   const key = cb.dataset.layer!;
   cb.addEventListener('change', () => {
     if (key === 'seamarks') { map.setLayoutProperty('seamarks', 'visibility', cb.checked ? 'visible' : 'none'); return; }
+    if (key === 'wind') { setWind(cb.checked); return; }
+    if (key === 'rocks') { setRocks(cb.checked); return; }
     const k = key as PlaceKind;
     if (cb.checked) enabledKinds.add(k); else enabledKinds.delete(k);
     loadPlaces(true);
@@ -243,7 +238,7 @@ function setStatus(msg: string, isError = false) {
 map.once('style.load', () => {
   restyleBase();
   map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 256, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
-  map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: mode === 'chart' ? 'visible' : 'none' } });
+  map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: 'visible' } });
   map.addSource('seamarks', { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256, minzoom: 6, maxzoom: 18, attribution: 'Marks © OpenSeaMap' });
   map.addLayer({ id: 'seamarks', type: 'raster', source: 'seamarks', layout: { visibility: 'none' } });
   map.addSource('places', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -255,6 +250,16 @@ map.once('style.load', () => {
       'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 2,
     },
   });
+  map.addSource('rocks', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'rocks', type: 'circle', source: 'rocks', layout: { visibility: 'none' },
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 3, 14, 5.5, 17, 8],
+      'circle-color': '#F26B1D', 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 15, 1.5],
+    },
+  }, 'places');
+  map.addSource('course', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({ id: 'course', type: 'line', source: 'course', layout: { 'line-cap': 'round' }, paint: { 'line-color': '#0B1F3F', 'line-width': 3 } });
   map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addLayer({ id: 'route-line', type: 'line', source: 'route', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#0B1F3F', 'line-width': 3, 'line-dasharray': [2, 1.5] } });
   map.addLayer({ id: 'route-pts', type: 'circle', source: 'route', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 7, 'circle-color': '#FBF8F1', 'circle-stroke-color': '#0B1F3F', 'circle-stroke-width': 3 } });
@@ -272,6 +277,8 @@ map.on('mouseenter', 'places', () => { map.getCanvas().style.cursor = 'pointer';
 map.on('mouseleave', 'places', () => { map.getCanvas().style.cursor = ''; });
 
 map.on('click', (e: MapMouseEvent) => {
+  const rockHit = map.getLayer('rocks') && rocksOn ? map.queryRenderedFeatures([[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]], { layers: ['rocks'] }).at(0) : undefined;
+  if (rockHit && tab !== 'navigate') { const r = rocks.find((x) => x.id === rockHit.properties?.['id']); if (r) { showRock(r); return; } }
   const hits = map.queryRenderedFeatures(e.point, { layers: ['places'] });
   const first = hits.at(0);
   if (first && tab !== 'navigate') {
@@ -293,8 +300,20 @@ async function showConditions(p: LatLon) {
   $('#detail-body').innerHTML = `<p class="coord">${coord}</p><div class="loading">Loading live forecast…</div>`;
   openSheet('sheet-detail');
 
+  let depthDone = false;
+  depthAt(p).then((d) => {
+    depthDone = true;
+    const el = document.getElementById('depth-block'); if (!el) return;
+    if (d.onLand) { el.innerHTML = `<div class="depth-main"><small>Charted depth</small><b>No chart depth here</b><span class="fine">Land, or outside NOAA chart coverage</span></div>`; return; }
+    const range = d.areaMinFt !== null && d.areaMaxFt !== null ? `${Math.round(d.areaMinFt)}–${Math.round(d.areaMaxFt)} ft` : null;
+    const shallow = (d.areaMinFt ?? 99) < 6;
+    el.innerHTML = `<div class="depth-main ${shallow ? 'shallow' : ''}"><small>Charted depth</small><b>${range ?? (d.sounding ? `${d.sounding.ft.toFixed(0)} ft` : '—')}</b>
+      ${d.sounding ? `<span>Nearest sounding <b>${d.sounding.ft.toFixed(0)} ft</b>, ${Math.round(d.sounding.distYd)} yd away</span>` : ''}</div>
+      <p class="src">NOAA chart (${esc(d.scale ?? '')} scale), depths below mean lower low water. Actual depth varies with tide. Not for navigation.</p>`;
+  }).catch(() => { depthDone = true; const el = document.getElementById('depth-block'); if (el) el.innerHTML = `<p class="err">Couldn’t load chart depth right now.</p>`; });
+
   const body = $('#detail-body');
-  let html = `<p class="coord">${coord}</p>`;
+  let html = `<p class="coord">${coord}</p><div id="depth-block" class="depth"><div class="loading">Checking charted depth…</div></div>`;
   try {
     const c = await fetchConditions(p);
     const nowIdx = Math.max(0, c.hours.findIndex((h) => Date.parse(h.time) >= Date.now() - 30 * 60e3));
@@ -313,7 +332,9 @@ async function showConditions(p: LatLon) {
   } catch {
     html += `<p class="err">Couldn’t load the forecast right now. Check your connection and tap again.</p>`;
   }
+  const depthHtml = document.getElementById('depth-block')?.outerHTML;
   body.innerHTML = html + `<div id="tides"><div class="loading">Finding nearest NOAA tide station…</div></div>`;
+  if (depthHtml && depthDone) { const el = document.getElementById('depth-block'); if (el) el.outerHTML = depthHtml; }
 
   const tidesEl = $('#tides');
   try {
@@ -442,6 +463,120 @@ form.addEventListener('submit', (e) => {
   renderBoat();
 });
 
+// ------------------------------------------------------------------ rocks (orange, NOAA ENC)
+let rocksOn = store.get<boolean>('nav.rocks') ?? false;
+let rocks: Rock[] = [];
+let rockTimer: number | undefined;
+const rockCache = new Map<string, Rock[]>();
+function setRocks(on: boolean) {
+  rocksOn = on; store.set('nav.rocks', on);
+  syncToggles();
+  if (map.getLayer('rocks')) map.setLayoutProperty('rocks', 'visibility', on ? 'visible' : 'none');
+  if (on) loadRocks(true);
+}
+function loadRocks(immediate = false) {
+  window.clearTimeout(rockTimer);
+  if (!rocksOn) return;
+  rockTimer = window.setTimeout(async () => {
+    if (map.getZoom() < 11) { setStatus('Zoom in closer to see rocks', false); window.setTimeout(() => setStatus(''), 2500); return; }
+    const b = map.getBounds(); const z = Math.round(map.getZoom());
+    const snap = (v: number, up: boolean) => (up ? Math.ceil(v * 50) : Math.floor(v * 50)) / 50;
+    const box = { s: snap(b.getSouth(), false), w: snap(b.getWest(), false), n: snap(b.getNorth(), true), e: snap(b.getEast(), true) };
+    const key = `${box.s},${box.w},${box.n},${box.e},${z >= 13 ? 'h' : 'a'}`;
+    try {
+      rocks = rockCache.get(key) ?? await rocksInView(box, z);
+      rockCache.set(key, rocks);
+      (map.getSource('rocks') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: rocks.map((r) => ({ type: 'Feature', properties: { id: r.id }, geometry: { type: 'Point', coordinates: [r.lon, r.lat] } })) });
+    } catch { setStatus('Couldn’t load rocks from NOAA right now.', true); }
+  }, immediate ? 0 : 500);
+}
+map.on('moveend', () => loadRocks());
+function showRock(r: Rock) {
+  $('#detail-title').textContent = r.name ?? 'Rock';
+  $('#detail-body').innerHTML = `<div class="pill-row"><span class="pill" style="--c:#F26B1D">Rock</span><span class="badge">NOAA chart</span></div>
+    <div class="kv"><small>Status</small><span>${esc(r.watlev ? WATLEV_LABEL[r.watlev] ?? 'Unknown' : 'Not stated on chart')}</span></div>
+    ${r.valsouFt !== null ? `<div class="kv"><small>Depth over</small><span>${r.valsouFt.toFixed(1)} ft below MLLW</span></div>` : ''}
+    <div class="row"><button class="btn ghost" id="rock-wx">Conditions here</button></div>
+    <p class="src">From NOAA electronic chart data. Not for navigation; give charted hazards a wide berth.</p>`;
+  $('#rock-wx').addEventListener('click', () => showConditions({ lat: r.lat, lon: r.lon }));
+  openSheet('sheet-detail');
+}
+
+// ------------------------------------------------------------------ wind (animated, PredictWind-style)
+let windOn = false;
+let wind: WindLayer | null = null;
+let windTimer: number | undefined;
+let windKey = '';
+const windSlider = $('#wind-slider') as HTMLInputElement;
+$('#wind-legend').innerHTML = LEGEND_STOPS.map((k) => `<span style="--c:${speedColor(k)}">${k}</span>`).join('') + '<em>kn</em>';
+function windLabel(iso: string) {
+  const d = new Date(iso);
+  if (Math.abs(d.getTime() - Date.now()) < 45 * 60e3) return 'Now';
+  return d.toLocaleString([], { weekday: 'short', hour: 'numeric' });
+}
+function setWindTimeIndexToNow() {
+  if (!wind) return;
+  const times = wind.times; if (!times.length) return;
+  let idx = times.findIndex((t) => Date.parse(t) >= Date.now() - 30 * 60e3); if (idx < 0) idx = 0;
+  windSlider.min = String(idx); windSlider.max = String(Math.min(times.length - 1, idx + 47));
+  if (Number(windSlider.value) < idx || Number(windSlider.value) > Number(windSlider.max)) windSlider.value = String(idx);
+  wind.setTime(Number(windSlider.value)); $('#wind-time').textContent = windLabel(times.at(Number(windSlider.value))!);
+}
+windSlider.addEventListener('input', () => { if (!wind) return; wind.setTime(Number(windSlider.value)); $('#wind-time').textContent = windLabel(wind.times.at(Number(windSlider.value)) ?? ''); });
+async function loadWind() {
+  if (!windOn) return;
+  const b = map.getBounds();
+  const key = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map((v) => v.toFixed(1)).join(',') + Math.round(map.getZoom());
+  if (key === windKey) return;
+  try {
+    $('#wind-src').textContent = 'Loading forecast…';
+    const g = await fetchWindGrid({ s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
+    windKey = key;
+    wind?.setGrid(g); setWindTimeIndexToNow();
+    $('#wind-src').textContent = 'Forecast wind · Open-Meteo';
+  } catch { $('#wind-src').textContent = 'Couldn’t load wind forecast'; }
+}
+function setWind(on: boolean) {
+  windOn = on; syncToggles();
+  $('#wind-bar').hidden = !on;
+  document.body.classList.toggle('wind-on', on);
+  if (on) { if (!wind) wind = new WindLayer(map, $('#map')); wind.start(); windKey = ''; loadWind(); }
+  else wind?.stop();
+}
+map.on('moveend', () => { window.clearTimeout(windTimer); if (windOn) windTimer = window.setTimeout(loadWind, 700); });
+
+// ------------------------------------------------------------------ quick toggles
+let placesOn = true;
+function syncToggles() {
+  const state: Record<string, boolean> = { wind: windOn, rocks: rocksOn, places: placesOn };
+  document.querySelectorAll<HTMLButtonElement>('[data-quick]').forEach((b) => { const on = state[b.dataset.quick!] ?? false; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  const w = document.querySelector<HTMLInputElement>('[data-layer="wind"]'); if (w) w.checked = windOn;
+  const r = document.querySelector<HTMLInputElement>('[data-layer="rocks"]'); if (r) r.checked = rocksOn;
+}
+document.querySelectorAll<HTMLButtonElement>('[data-quick]').forEach((b) => b.addEventListener('click', () => {
+  const k = b.dataset.quick!;
+  if (k === 'wind') setWind(!windOn);
+  else if (k === 'rocks') setRocks(!rocksOn);
+  else if (k === 'places') { placesOn = !placesOn; if (map.getLayer('places')) map.setLayoutProperty('places', 'visibility', placesOn ? 'visible' : 'none'); syncToggles(); }
+}));
+map.once('style.load', () => { if (rocksOn) setRocks(true); });
+
+// ------------------------------------------------------------------ my boat (triangle + course line)
+const boat = new BoatTracker(map);
+const readout = $('#boat-readout');
+boat.onUpdate = (s) => {
+  readout.hidden = false; $('#hint').hidden = true;
+  const hdg = s.headingDeg === null ? '—' : `${Math.round(s.headingDeg).toString().padStart(3, '0')}°`;
+  const src = s.source === 'gps' ? 'COG' : s.source === 'compass' ? 'HDG' : 'HDG';
+  readout.innerHTML = `<span><small>${src}</small><b>${hdg}</b></span><span><small>SOG</small><b>${s.sogKn === null ? '—' : s.sogKn.toFixed(1)} kn</b></span>`;
+};
+boat.onError = (msg) => setStatus(msg, true);
+$('#btn-boat').addEventListener('click', async () => {
+  if (boat.active) { boat.recenter(); return; }
+  $('#btn-boat').classList.add('on');
+  await boat.start();
+});
+
 renderBoat();
-setMode(mode);
+syncToggles();
 setTab('explore');

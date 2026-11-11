@@ -20,10 +20,20 @@
       </button>
     </header>
     <div class="search-results glass" id="search-results" hidden></div>
-    <div class="mode-switch glass" role="tablist" aria-label="Map type">
-      <button data-mode="chart" class="on" role="tab">Chart</button>
-      <button data-mode="map" role="tab">Map</button>
+    <div class="quick" role="group" aria-label="Quick layers">
+      <button class="qchip glass" data-quick="wind" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h8"/></svg>Wind</button>
+      <button class="qchip glass" data-quick="rocks" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 18 9 9l4 5 2-3 5 7Z"/></svg>Rocks</button>
+      <button class="qchip glass on" data-quick="places" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11a7 7 0 1 1 14 0c0 4.8-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>Marinas</button>
     </div>
+    <div class="wind-bar glass" id="wind-bar" hidden>
+      <div class="wind-row"><b id="wind-time">Now</b><span class="fine" id="wind-src">Forecast wind · Open-Meteo</span></div>
+      <input type="range" id="wind-slider" min="0" max="47" value="0" aria-label="Forecast time" />
+      <div class="legend" id="wind-legend"></div>
+    </div>
+    <button class="fab glass" id="btn-boat" aria-label="Show my boat">
+      <svg viewBox="0 0 24 24" width="24" height="24"><path d="M12 2 20 21 12 17 4 21Z" fill="currentColor"/></svg>
+    </button>
+    <div class="readout glass" id="boat-readout" hidden></div>
 
     <div id="map" role="region" aria-label="Map"></div>
     <div class="hint" id="hint">Tap the water for conditions</div>
@@ -33,6 +43,8 @@
       <div class="sheet-head"><h2>Map layers</h2><button class="close" data-close="sheet-layers" aria-label="Close">✕</button></div>
       <div class="layer-list">
         <label class="toggle"><input type="checkbox" data-layer="seamarks" /><span class="sw"></span><span><b>Extra marks (OpenSeaMap)</b><small>Community buoy/light data; the NOAA chart already shows official marks</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="wind" /><span class="sw"></span><span><b>Wind (animated)</b><small>Forecast wind streaks, coloured by speed</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="rocks" /><span class="sw"></span><span><b><i class="dot" style="--c:#F26B1D"></i>Rocks in orange</b><small>From NOAA chart data · zoom in to harbor level</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="marina" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#1F7A8C"></i>Marinas</b><small>OpenStreetMap · unverified</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="fuel" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#E0A100"></i>Fuel docks</b><small>OpenStreetMap · unverified</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="pumpout" /><span class="sw"></span><span><b><i class="dot" style="--c:#6B5CA5"></i>Pump-out</b><small>OpenStreetMap · unverified</small></span></label>
