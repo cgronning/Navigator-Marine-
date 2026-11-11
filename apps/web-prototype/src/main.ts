@@ -42,6 +42,12 @@ const style: StyleSpecification = {
 };
 
 const saved = store.get<{ center: [number, number]; zoom: number }>('nav.view');
+function fatal(msg: string) {
+  const d = document.createElement('div'); d.className = 'status error'; d.textContent = msg; document.body.appendChild(d);
+}
+if (!document.createElement('canvas').getContext('webgl2') && !document.createElement('canvas').getContext('webgl')) {
+  fatal('This browser can’t draw the map (WebGL is off). Try opening the link in Safari or Chrome.');
+}
 const map = new maplibregl.Map({
   container: 'map',
   style,
@@ -52,6 +58,33 @@ const map = new maplibregl.Map({
   dragRotate: false,
 });
 map.touchZoomRotate.disableRotation();
+(window as unknown as { __navMap: unknown }).__navMap = map;
+
+// ------------------------------------------------------------------ map health: show problems instead of a silent blank map
+let baseTileErrors = 0;
+let baseLoaded = false;
+let usingFallback = false;
+map.on('error', (e) => {
+  const msg = (e as { error?: Error }).error?.message ?? 'unknown error';
+  const srcId = (e as { sourceId?: string }).sourceId;
+  if (srcId === 'seamarks') return; // optional overlay; ignore its failures
+  if (srcId === 'base') {
+    baseTileErrors++;
+    if (baseTileErrors >= 4 && !usingFallback) {
+      usingFallback = true;
+      const src = map.getSource('base') as maplibregl.RasterTileSource | undefined;
+      src?.setTiles(['https://tile.openstreetmap.org/{z}/{x}/{y}.png']);
+      setStatus('Switched to backup map tiles', false);
+      return;
+    }
+  }
+  setStatus(`Map problem: ${msg}`, true);
+});
+map.on('sourcedata', (e) => { if (e.sourceId === 'base' && e.isSourceLoaded) baseLoaded = true; });
+map.on('webglcontextlost', () => setStatus('The map display was interrupted. Reload the page.', true));
+window.setTimeout(() => {
+  if (!baseLoaded) setStatus(`Map tiles haven't loaded yet (${baseTileErrors} errors). Check your connection or reload.`, true);
+}, 10000);
 map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Weather: <a href="https://open-meteo.com">Open-Meteo</a> · Tides: NOAA' }), 'bottom-left');
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'top-right');
