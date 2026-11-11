@@ -11,11 +11,19 @@
 <body>
   <div id="app">
     <header class="topbar">
-      <div class="brand"><span class="mark" aria-hidden="true">✦</span><span class="word">Navigator</span><span class="tag">Prototype</span></div>
-      <button class="icon-btn" id="btn-layers" aria-label="Map layers">
+      <form class="search glass" id="search-form" role="search">
+        <span class="mark" aria-hidden="true">✦</span>
+        <input id="search" type="search" placeholder="Search harbors, islands, marinas" autocomplete="off" enterkeyhint="search" aria-label="Search" />
+      </form>
+      <button class="icon-btn glass" id="btn-layers" aria-label="Map layers">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/></svg>
       </button>
     </header>
+    <div class="search-results glass" id="search-results" hidden></div>
+    <div class="mode-switch glass" role="tablist" aria-label="Map type">
+      <button data-mode="chart" class="on" role="tab">Chart</button>
+      <button data-mode="map" role="tab">Map</button>
+    </div>
 
     <div id="map" role="region" aria-label="Map"></div>
     <div class="hint" id="hint">Tap the water for conditions</div>
@@ -24,7 +32,7 @@
     <section class="sheet" id="sheet-layers" hidden>
       <div class="sheet-head"><h2>Map layers</h2><button class="close" data-close="sheet-layers" aria-label="Close">✕</button></div>
       <div class="layer-list">
-        <label class="toggle"><input type="checkbox" data-layer="seamarks" checked /><span class="sw"></span><span><b>Navigation marks</b><small>Buoys, beacons, lights · OpenSeaMap</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="seamarks" /><span class="sw"></span><span><b>Extra marks (OpenSeaMap)</b><small>Community buoy/light data; the NOAA chart already shows official marks</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="marina" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#1F7A8C"></i>Marinas</b><small>OpenStreetMap · unverified</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="fuel" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#E0A100"></i>Fuel docks</b><small>OpenStreetMap · unverified</small></span></label>
         <label class="toggle"><input type="checkbox" data-layer="pumpout" /><span class="sw"></span><span><b><i class="dot" style="--c:#6B5CA5"></i>Pump-out</b><small>OpenStreetMap · unverified</small></span></label>

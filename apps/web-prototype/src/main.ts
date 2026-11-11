@@ -1,4 +1,4 @@
-import maplibregl, { type GeoJSONSource, type MapMouseEvent, type StyleSpecification } from 'maplibre-gl';
+import maplibregl, { type GeoJSONSource, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles.css';
 import { inverse, METRES_PER_NM, etaHours } from '../../../packages/core/src/geo/nav.ts';
@@ -21,25 +21,16 @@ const store = {
 const KIND_COLOR: Record<PlaceKind, string> = { marina: '#1F7A8C', fuel: '#E0A100', pumpout: '#6B5CA5', anchorage: '#1E8E5A', ramp: '#C8322B' };
 
 // ------------------------------------------------------------------ map
-const style: StyleSpecification = {
-  version: 8,
-  sources: {
-    base: {
-      type: 'raster', tileSize: 256, maxzoom: 19,
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    },
-    seamarks: {
-      type: 'raster', tileSize: 256, minzoom: 6, maxzoom: 18,
-      tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'],
-      attribution: 'Marks © <a href="https://www.openseamap.org">OpenSeaMap</a>',
-    },
-  },
-  layers: [
-    { id: 'base', type: 'raster', source: 'base' },
-    { id: 'seamarks', type: 'raster', source: 'seamarks' },
-  ],
-};
+// Modern vector base map (OpenFreeMap, no key) restyled in Navigator colors,
+// with NOAA's official electronic chart (ENC) drawn on top: soundings, depth
+// contours, rocks, wrecks, buoys, lights, channels, restricted areas.
+const BASE_STYLE = 'https://tiles.openfreemap.org/styles/positron';
+const NOAA_CHART_WMS = 'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/NOAAChartDisplay/MapServer/exts/MaritimeChartService/WMSServer'
+  + '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=0,1,2,3,4,5,6,7&STYLES=&CRS=EPSG:3857'
+  + '&BBOX={bbox-epsg-3857}&WIDTH=512&HEIGHT=512&FORMAT=image/png&TRANSPARENT=TRUE';
+
+type Mode = 'chart' | 'map';
+let mode: Mode = store.get<Mode>('nav.mode') ?? 'chart';
 
 const saved = store.get<{ center: [number, number]; zoom: number }>('nav.view');
 function fatal(msg: string) {
@@ -50,45 +41,97 @@ if (!document.createElement('canvas').getContext('webgl2') && !document.createEl
 }
 const map = new maplibregl.Map({
   container: 'map',
-  style,
+  style: BASE_STYLE,
   center: saved?.center ?? [-71.33, 41.47], // Newport / Narragansett Bay
-  zoom: saved?.zoom ?? 11.5,
+  zoom: saved?.zoom ?? 12,
   attributionControl: false,
   maxPitch: 0,
   dragRotate: false,
+  fadeDuration: 150,
 });
 map.touchZoomRotate.disableRotation();
 (window as unknown as { __navMap: unknown }).__navMap = map;
 
+function restyleBase() {
+  for (const l of map.getStyle().layers ?? []) {
+    try {
+      if (l.type === 'background') map.setPaintProperty(l.id, 'background-color', '#F4F0E6');
+      else if (l.type === 'fill' && /water|ocean|sea/.test(l.id)) map.setPaintProperty(l.id, 'fill-color', '#CFE2EA');
+      else if (l.type === 'line' && /waterway|river/.test(l.id)) map.setPaintProperty(l.id, 'line-color', '#AFCFDC');
+      else if (l.type === 'fill' && /park|wood|grass|landcover/.test(l.id)) map.setPaintProperty(l.id, 'fill-color', '#E9E8D8');
+      else if (l.type === 'symbol' && /water|ocean|sea|bay|marine/.test(l.id)) map.setPaintProperty(l.id, 'text-color', '#3A6F86');
+    } catch { /* layer without that property */ }
+  }
+}
+
 // ------------------------------------------------------------------ map health: show problems instead of a silent blank map
-let baseTileErrors = 0;
+let chartErrors = 0;
 let baseLoaded = false;
-let usingFallback = false;
 map.on('error', (e) => {
   const msg = (e as { error?: Error }).error?.message ?? 'unknown error';
   const srcId = (e as { sourceId?: string }).sourceId;
-  if (srcId === 'seamarks') return; // optional overlay; ignore its failures
-  if (srcId === 'base') {
-    baseTileErrors++;
-    if (baseTileErrors >= 4 && !usingFallback) {
-      usingFallback = true;
-      const src = map.getSource('base') as maplibregl.RasterTileSource | undefined;
-      src?.setTiles(['https://tile.openstreetmap.de/{z}/{x}/{y}.png']);
-      setStatus('Switched to backup map tiles', false);
-      return;
-    }
+  if (srcId === 'seamarks') return; // optional overlay
+  if (srcId === 'chart') {
+    chartErrors++;
+    if (chartErrors === 6) setStatus('NOAA chart service is slow right now; some chart areas may be missing.', true);
+    return;
   }
   setStatus(`Map problem: ${msg}`, true);
 });
-map.on('sourcedata', (e) => { if (e.sourceId === 'base' && e.isSourceLoaded) baseLoaded = true; });
+map.on('sourcedata', (e) => { if (e.isSourceLoaded && e.sourceId !== 'places' && e.sourceId !== 'route') baseLoaded = true; });
 map.on('webglcontextlost', () => setStatus('The map display was interrupted. Reload the page.', true));
-window.setTimeout(() => {
-  if (!baseLoaded) setStatus(`Map tiles haven't loaded yet (${baseTileErrors} errors). Check your connection or reload.`, true);
-}, 10000);
-map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Weather: <a href="https://open-meteo.com">Open-Meteo</a> · Tides: NOAA' }), 'bottom-left');
-map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
-map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'top-right');
+window.setTimeout(() => { if (!baseLoaded) setStatus('The map hasn’t loaded yet. Check your connection or reload.', true); }, 12000);
+
+map.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Chart: NOAA ENC® (not for navigation) · Weather: <a href="https://open-meteo.com">Open-Meteo</a> · Tides: NOAA' }), 'bottom-left');
+if (window.matchMedia('(pointer: fine)').matches) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'bottom-right');
 map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-right');
+
+function setMode(m: Mode) {
+  mode = m;
+  store.set('nav.mode', m);
+  document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => { b.classList.toggle('on', b.dataset.mode === m); b.setAttribute('aria-selected', String(b.dataset.mode === m)); });
+  if (map.getLayer('chart')) map.setLayoutProperty('chart', 'visibility', m === 'chart' ? 'visible' : 'none');
+}
+document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode as Mode)));
+
+// ------------------------------------------------------------------ search (OpenStreetMap Nominatim + loaded places)
+const searchInput = $('#search') as HTMLInputElement;
+const searchResults = $('#search-results');
+let searchTimer: number | undefined;
+let searchSeq = 0;
+async function runSearch(q: string) {
+  const seq = ++searchSeq;
+  if (q.trim().length < 3) { searchResults.hidden = true; return; }
+  const ql = q.toLowerCase();
+  const local = places.filter((p) => p.name.toLowerCase().includes(ql)).slice(0, 4)
+    .map((p) => ({ label: p.name, sub: KIND_LABEL[p.kind], lat: p.lat, lon: p.lon, place: p as Place | null }));
+  let remote: { label: string; sub: string; lat: number; lon: number; place: Place | null }[] = [];
+  try {
+    const c = map.getCenter();
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(q)}&viewbox=${c.lng - 3},${c.lat + 2},${c.lng + 3},${c.lat - 2}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const rows = (await res.json()) as { display_name: string; lat: string; lon: string; type: string }[];
+    remote = rows.map((r) => ({ label: r.display_name.split(',')[0] ?? r.display_name, sub: r.display_name.split(',').slice(1, 3).join(',').trim(), lat: Number(r.lat), lon: Number(r.lon), place: null }));
+  } catch { /* show local results only */ }
+  if (seq !== searchSeq) return;
+  const all = [...local, ...remote];
+  searchResults.innerHTML = all.length
+    ? all.map((r, i) => `<button class="result" data-i="${i}"><b>${esc(r.label)}</b><small>${esc(r.sub)}</small></button>`).join('')
+    : `<p class="fine pad">No results.</p>`;
+  searchResults.hidden = false;
+  searchResults.querySelectorAll<HTMLButtonElement>('.result').forEach((b) => b.addEventListener('click', () => {
+    const r = all.at(Number(b.dataset.i)); if (!r) return;
+    searchResults.hidden = true; searchInput.blur();
+    setTab('explore');
+    map.flyTo({ center: [r.lon, r.lat], zoom: Math.max(map.getZoom(), 13), speed: 1.4 });
+    if (r.place) showPlace(r.place);
+  }));
+}
+searchInput.addEventListener('input', () => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(() => runSearch(searchInput.value), 450); });
+($('#search-form') as HTMLFormElement).addEventListener('submit', (e) => { e.preventDefault(); runSearch(searchInput.value); });
+searchInput.addEventListener('focus', () => { if (searchResults.innerHTML && searchInput.value.length >= 3) searchResults.hidden = false; });
+map.on('movestart', () => { searchResults.hidden = true; });
 
 // ------------------------------------------------------------------ state
 type Tab = 'explore' | 'navigate' | 'vessels' | 'services' | 'boat';
@@ -191,6 +234,11 @@ function setStatus(msg: string, isError = false) {
 
 // ------------------------------------------------------------------ map layers on load
 map.on('load', () => {
+  restyleBase();
+  map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 256, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
+  map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: mode === 'chart' ? 'visible' : 'none' } });
+  map.addSource('seamarks', { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256, minzoom: 6, maxzoom: 18, attribution: 'Marks © OpenSeaMap' });
+  map.addLayer({ id: 'seamarks', type: 'raster', source: 'seamarks', layout: { visibility: 'none' } });
   map.addSource('places', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addLayer({
     id: 'places', type: 'circle', source: 'places',
@@ -386,4 +434,5 @@ form.addEventListener('submit', (e) => {
 });
 
 renderBoat();
+setMode(mode);
 setTab('explore');
