@@ -127,10 +127,10 @@ export class WindLayer {
     const ctx = this.ctx, w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     // fade old trails
     ctx.globalCompositeOperation = 'destination-in';
-    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.fillStyle = 'rgba(0,0,0,0.94)';
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.lineWidth = 1.6;
+    ctx.lineWidth = 2.2;
     ctx.lineCap = 'round';
     const k = 0.045; // pixels per frame per knot (visual only)
     for (const p of this.particles) {
