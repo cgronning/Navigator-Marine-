@@ -14,12 +14,36 @@ import { distanceNm } from '../../../packages/core/src/geo/nav.ts';
 import type { LatLon } from './data.ts';
 
 const BASE = 'https://encdirect.noaa.gov/arcgis/rest/services/encdirect';
-const LAYERS = [
-  // drawn in this order: least detailed first, so detailed charts overwrite them
-  { svc: 'enc_coastal', depth: 166, land: 171, rock: 31, obst: 30, wreck: 33 },
-  { svc: 'enc_approach', depth: 232, land: 238, rock: 37, obst: 36, wreck: 39 },
-  { svc: 'enc_harbour', depth: 227, land: 0, rock: 34, obst: 33, wreck: 36 },
-];
+// Chart scales, least detailed first so detailed charts are painted on top.
+const SCALES = ['enc_coastal', 'enc_approach', 'enc_harbour'] as const;
+const KNOWN: Record<string, Partial<Record<LayerKey, number>>> = {
+  enc_coastal: { depth: 166, dredged: 167, land: 171, shore: 105, rock: 31, obst: 30, wreck: 33 },
+  enc_approach: { depth: 232, dredged: 233, land: 238, shore: 143, rock: 37, obst: 36, wreck: 39 },
+  enc_harbour: { depth: 227, rock: 34, obst: 33, wreck: 36 },
+};
+type LayerKey = 'depth' | 'dredged' | 'land' | 'shore' | 'rock' | 'obst' | 'wreck';
+const PATTERNS: Record<LayerKey, RegExp> = {
+  depth: /\.Depth_Area$/, dredged: /\.Dredged_Area$/, land: /\.Land_Area$/, shore: /\.Shoreline_Construction_area$/,
+  rock: /\.Underwater_Awash_Rock_point$/, obst: /\.Obstruction_point$/, wreck: /\.Wreck_point$/,
+};
+const idCache = new Map<string, Promise<Partial<Record<LayerKey, number>>>>();
+function layerIds(svc: string): Promise<Partial<Record<LayerKey, number>>> {
+  if (!idCache.has(svc)) {
+    idCache.set(svc, (async () => {
+      for (let a = 0; a < 6; a++) {
+        try {
+          const j = await fetch(`${BASE}/${svc}/MapServer/layers?f=json`, { signal: AbortSignal.timeout(10000) }).then((r) => r.json());
+          if (!j.layers) throw new Error('no layers');
+          const ids: Partial<Record<LayerKey, number>> = {};
+          for (const l of j.layers as { id: number; name: string }[]) for (const k of Object.keys(PATTERNS) as LayerKey[]) if (ids[k] === undefined && PATTERNS[k].test(l.name)) ids[k] = l.id;
+          return { ...KNOWN[svc], ...ids };
+        } catch { await new Promise((r) => setTimeout(r, 250 * (a + 1))); }
+      }
+      return KNOWN[svc] ?? {};
+    })());
+  }
+  return idCache.get(svc)!;
+}
 
 interface EsriFeature { attributes: Record<string, unknown>; geometry?: { rings?: number[][][]; x?: number; y?: number } }
 
@@ -47,14 +71,6 @@ async function query(svc: string, layer: number, env: string, fields: string, of
     if (!j.exceededTransferLimit || j.features.length === 0) break;
   }
   return all;
-}
-
-async function harbourLandLayer(): Promise<number | null> {
-  try {
-    const j = await fetch(`${BASE}/enc_harbour/MapServer/layers?f=json`).then((r) => r.json());
-    const l = (j.layers as { id: number; name: string }[]).find((x) => /Land_Area$/.test(x.name));
-    return l?.id ?? null;
-  } catch { return null; }
 }
 
 export interface CoastalOptions { draftFt: number; marginFt: number; hazardBufferM: number }
@@ -107,17 +123,19 @@ async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions,
   onProgress('Loading NOAA chart depths and hazards…');
   const env = JSON.stringify({ xmin: w, ymin: s, xmax: e, ymax: n, spatialReference: { wkid: 4326 } });
   const offset = (cell / mPerDegLat) * 0.5;
-  const hLand = await harbourLandLayer();
-  const perScale = await Promise.all(LAYERS.map(async (L) => {
-    const landId = L.svc === 'enc_harbour' ? hLand : L.land;
-    const [depth, land, rock, obst, wreck] = await Promise.all([
-      query(L.svc, L.depth, env, 'DRVAL1,OBJECTID', offset).catch(() => null),
-      landId ? query(L.svc, landId, env, 'OBJECTID', offset).catch(() => []) : Promise.resolve([]),
-      query(L.svc, L.rock, env, 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
-      query(L.svc, L.obst, env, 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
-      query(L.svc, L.wreck, env, 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
+  const perScale = await Promise.all(SCALES.map(async (svc) => {
+    const ids = await layerIds(svc);
+    const get = (k: LayerKey, fields: string, off: number) => (ids[k] !== undefined ? query(svc, ids[k]!, env, fields, off) : Promise.resolve([] as EsriFeature[]));
+    const [depth, dredged, land, shore, rock, obst, wreck] = await Promise.all([
+      get('depth', 'DRVAL1,OBJECTID', offset).catch(() => null),
+      get('dredged', 'DRVAL1,OBJECTID', offset).catch(() => []),
+      get('land', 'OBJECTID', offset).catch(() => []),
+      get('shore', 'OBJECTID', offset).catch(() => []),
+      get('rock', 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
+      get('obst', 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
+      get('wreck', 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
     ]);
-    return { depth, land, hazards: [...rock, ...obst, ...wreck] };
+    return { depth, dredged, land: [...land, ...shore], hazards: [...rock, ...obst, ...wreck] };
   }));
   if (perScale.every((p) => !p.depth || p.depth.length === 0)) throw new RouteError('No NOAA chart depth data for this area (or the chart server is down). Try again in a moment.');
 
@@ -132,7 +150,7 @@ async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions,
     ctx.fill('evenodd');
   };
   for (const sc of perScale) {
-    for (const f of sc.depth ?? []) {
+    for (const f of [...(sc.depth ?? []), ...sc.dredged]) {
       const d1 = typeof f.attributes['DRVAL1'] === 'number' ? (f.attributes['DRVAL1'] as number) : -1;
       const ok = d1 >= needM;
       const g = Math.max(0, Math.min(255, Math.round(d1 * 10)));
@@ -189,7 +207,7 @@ async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions,
   };
   const a = snap(start), b = snap(end);
   const dbg = (globalThis as unknown as { __routeDebug?: unknown[] }).__routeDebug;
-  if (dbg) dbg.push({ W, H, cell, free: free.slice(), clr: clr.slice(), a: a.idx, b: b.idx, counts: perScale.map((p) => [p.depth?.length ?? -1, p.land.length, p.hazards.length]) });
+  if (dbg) dbg.push({ W, H, cell, free: free.slice(), clr: clr.slice(), a: a.idx, b: b.idx, counts: perScale.map((p) => [p.depth?.length ?? -1, p.dredged.length, p.land.length, p.hazards.length]) });
 
   // ---- A* (8-connected) with a penalty for hugging hazards
   onProgress('Finding the shortest safe route…');

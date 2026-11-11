@@ -22,6 +22,11 @@ const inPoly = (lat: number, lon: number, poly: [number, number][]) => { let c =
     const d2: { lat: number; lon: number }[] = [];
     for (let i = 1; i < r2.path.length; i++) { const a = r2.path[i - 1]!, b = r2.path[i]!; for (let k = 0; k <= 50; k++) d2.push({ lat: a.lat + (b.lat - a.lat) * k / 50, lon: a.lon + (b.lon - a.lon) * k / 50 }); }
     out.rockOnLine = { legs: r2.path.length - 1, minRockDistM: Math.min(...d2.map((p) => distanceNm(p, { lat: 41.40, lon: -71.30 }) * 1852)) };
+    // enclosed basin whose only exit is a dredged channel (4 m): must route through the channel
+    const r3 = await coastalRoute({ lat: 41.29, lon: -71.345 }, { lat: 41.29, lon: -71.24 }, { draftFt: 6, marginFt: 3, hazardBufferM: 50 }, () => {});
+    out.dredged = { legs: r3.path.length - 1, maxLatDev: Math.max(...r3.path.map((p) => Math.abs(p.lat - 41.29))) };
+    // same but too deep for the channel (12 ft + 3 ft > 4 m): must refuse
+    try { await coastalRoute({ lat: 41.29, lon: -71.345 }, { lat: 41.29, lon: -71.24 }, { draftFt: 12, marginFt: 3, hazardBufferM: 50 }, () => {}); out.dredgedDeep = 'unexpected success'; } catch (e) { out.dredgedDeep = (e as Error).message.slice(0, 40); }
     // too deep a draft: should fail clearly
     try { await coastalRoute(start, end, { draftFt: 60, marginFt: 3, hazardBufferM: 50 }, () => {}); out.deepDraft = 'unexpected success'; } catch (e) { out.deepDraft = (e as Error).message; }
 
