@@ -51,7 +51,7 @@ button { font: inherit; color: inherit; }
 .maplibregl-ctrl-group button { width: 48px !important; height: 48px !important; }
 .maplibregl-ctrl-scale { background: rgb(251 248 241 / .8); border-color: var(--navy-700); color: var(--navy-900); font-weight: 600; }
 
-.hint { position: absolute; z-index: 4; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--safe-b) + 40px); background: rgb(11 31 63 / .85); color: var(--cream-50); font-size: 14px; padding: 8px 14px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
+.hint { position: absolute; z-index: 4; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--safe-b) + 64px); background: rgb(11 31 63 / .85); color: var(--cream-50); font-size: 14px; padding: 8px 14px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
 
 .status { position: fixed; z-index: 6; top: calc(128px + var(--safe-t)); left: 12px; background: var(--cream-50); padding: 8px 12px; border-radius: 10px; font-size: 13px; box-shadow: 0 4px 12px rgb(7 20 43 / .15); }
 .status.error { background: #FCEBEA; color: var(--red); }

@@ -233,7 +233,7 @@ function setStatus(msg: string, isError = false) {
 }
 
 // ------------------------------------------------------------------ map layers on load
-map.on('load', () => {
+map.once('style.load', () => {
   restyleBase();
   map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 256, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
   map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: mode === 'chart' ? 'visible' : 'none' } });
@@ -254,6 +254,8 @@ map.on('load', () => {
   drawRoute();
   loadPlaces(true);
 });
+map.once('idle', () => { document.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'); });
+map.once('dragstart', () => { $('#hint').hidden = true; });
 map.on('moveend', () => {
   const c = map.getCenter();
   store.set('nav.view', { center: [c.lng, c.lat], zoom: map.getZoom() });
