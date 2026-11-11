@@ -24,20 +24,29 @@ const LAYERS = [
 interface EsriFeature { attributes: Record<string, unknown>; geometry?: { rings?: number[][][]; x?: number; y?: number } }
 
 async function query(svc: string, layer: number, env: string, fields: string, offset: number): Promise<EsriFeature[]> {
-  const qs = new URLSearchParams({
-    where: '1=1', geometry: env, geometryType: 'esriGeometryEnvelope', inSR: '4326', outSR: '4326',
-    spatialRel: 'esriSpatialRelIntersects', outFields: fields, returnGeometry: 'true',
-    maxAllowableOffset: String(offset), geometryPrecision: '6', resultRecordCount: '5000', f: 'json',
-  });
-  let lastErr: unknown;
-  for (let a = 0; a < 5; a++) {
-    try {
-      const j = await fetch(`${BASE}/${svc}/MapServer/${layer}/query?${qs}`, { signal: AbortSignal.timeout(25000) }).then((r) => r.json());
-      if (j.error) throw new Error(j.error.message);
-      return j.features as EsriFeature[];
-    } catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, 200 * (a + 1))); }
+  const all: EsriFeature[] = [];
+  // NOAA caps each response (typically 1000-2000 features); page through until complete
+  for (let page = 0; page < 20; page++) {
+    const qs = new URLSearchParams({
+      where: '1=1', geometry: env, geometryType: 'esriGeometryEnvelope', inSR: '4326', outSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects', outFields: fields, returnGeometry: 'true',
+      maxAllowableOffset: String(offset), geometryPrecision: '6', resultOffset: String(all.length), resultRecordCount: '1000',
+      orderByFields: 'OBJECTID', f: 'json',
+    });
+    let j: { features: EsriFeature[]; exceededTransferLimit?: boolean } | null = null;
+    let lastErr: unknown;
+    for (let a = 0; a < 5 && !j; a++) {
+      try {
+        const r = await fetch(`${BASE}/${svc}/MapServer/${layer}/query?${qs}`, { signal: AbortSignal.timeout(25000) }).then((x) => x.json());
+        if (r.error) throw new Error(r.error.message);
+        j = r;
+      } catch (e) { lastErr = e; await new Promise((res) => setTimeout(res, 200 * (a + 1))); }
+    }
+    if (!j) throw lastErr;
+    all.push(...j.features);
+    if (!j.exceededTransferLimit || j.features.length === 0) break;
   }
-  throw lastErr;
+  return all;
 }
 
 async function harbourLandLayer(): Promise<number | null> {
@@ -102,11 +111,11 @@ async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions,
   const perScale = await Promise.all(LAYERS.map(async (L) => {
     const landId = L.svc === 'enc_harbour' ? hLand : L.land;
     const [depth, land, rock, obst, wreck] = await Promise.all([
-      query(L.svc, L.depth, env, 'DRVAL1', offset).catch(() => null),
+      query(L.svc, L.depth, env, 'DRVAL1,OBJECTID', offset).catch(() => null),
       landId ? query(L.svc, landId, env, 'OBJECTID', offset).catch(() => []) : Promise.resolve([]),
-      query(L.svc, L.rock, env, 'VALSOU,WATLEV', 0).catch(() => []),
-      query(L.svc, L.obst, env, 'VALSOU,WATLEV', 0).catch(() => []),
-      query(L.svc, L.wreck, env, 'VALSOU,WATLEV', 0).catch(() => []),
+      query(L.svc, L.rock, env, 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
+      query(L.svc, L.obst, env, 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
+      query(L.svc, L.wreck, env, 'VALSOU,WATLEV,OBJECTID', 0).catch(() => []),
     ]);
     return { depth, land, hazards: [...rock, ...obst, ...wreck] };
   }));

@@ -55,6 +55,7 @@ const map = new maplibregl.Map({
 });
 map.touchZoomRotate.disableRotation();
 (window as unknown as { __navMap: unknown }).__navMap = map;
+(window as unknown as { __navDebug: unknown }).__navDebug = { coastalRoute: (a: LatLon, b: LatLon, o: Parameters<typeof coastalRoute>[2]) => coastalRoute(a, b, o, (m) => console.log('[route]', m)) };
 
 function restyleBase() {
   for (const l of map.getStyle().layers ?? []) {
