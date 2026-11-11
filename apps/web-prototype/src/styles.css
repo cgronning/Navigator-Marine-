@@ -208,3 +208,26 @@ body.wind-on .maplibregl-ctrl-bottom-right, body.wind-on .fab, body.wind-on .rea
 .tide.cur-flood { border-top-color: #1F7A8C; } .tide.cur-ebb { border-top-color: #6B5CA5; } .tide.cur-slack { border-top-color: #CBD2DD; }
 .legs td, .legs th { white-space: nowrap; }
 #passage-result, #auto-result { overflow-x: auto; }
+
+/* compact route panel: a small bar so the chart stays usable */
+.nav-panel { padding: 18px 14px 12px; max-height: 60vh; }
+.nav-panel.compact { max-height: 46vh; }
+.nav-panel.compact .nav-more { display: none; }
+.nav-top { display: flex; gap: 8px; align-items: center; }
+.nav-top .seg { flex: 1; margin: 0; }
+.icon-sm { flex: none; width: 46px; height: 46px; border-radius: 12px; border: 0; background: var(--cream-100); color: var(--navy-900); display: grid; place-items: center; cursor: pointer; }
+.nav-panel:not(.compact) .icon-sm { background: var(--navy-900); color: var(--cream-50); }
+.nav-status { margin: 8px 2px; font-size: 14px; color: var(--navy-700); font-weight: 500; }
+.nav-actions { display: flex; gap: 8px; }
+.nav-actions .btn { flex: 1; min-height: 46px; }
+.nav-more { margin-top: 8px; }
+.nav-panel .totals { margin-top: 10px; }
+.nav-panel .totals div { padding: 8px 10px; }
+.nav-panel .totals b { font-size: 16px; }
+details.more { margin-top: 8px; }
+details.more summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--teal); padding: 6px 2px; list-style: none; }
+details.more summary::-webkit-details-marker { display: none; }
+details.more summary::after { content: ' ▾'; }
+details.more[open] summary::after { content: ' ▴'; }
+.nav-panel #route-summary .fine, .nav-panel #route-summary table { font-size: 13px; }
+.tight { margin: 6px 2px 0; }

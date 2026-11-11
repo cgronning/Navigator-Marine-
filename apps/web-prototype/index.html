@@ -64,44 +64,44 @@
     </section>
 
     <!-- Tab panels -->
-    <section class="panel" id="panel-navigate" hidden>
-      <div class="panel-head"><h2>Plan a route</h2><span class="badge warn">Planning aid only</span></div>
-      <div class="seg" role="tablist">
-        <button data-rmode="auto">Auto</button>
-        <button data-rmode="passage">Passage</button>
-        <button data-rmode="manual">Manual</button>
+    <section class="panel nav-panel compact" id="panel-navigate" hidden>
+      <div class="nav-top">
+        <div class="seg" role="tablist">
+          <button data-rmode="auto">Auto</button>
+          <button data-rmode="passage">Passage</button>
+          <button data-rmode="manual">Manual</button>
+        </div>
+        <button class="icon-sm" id="nav-expand" aria-label="Route settings" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+        </button>
       </div>
-      <div data-rpane="ends"><p class="fine" id="ends-text">Tap the map to set your start.</p></div>
+      <p class="nav-status" id="ends-text">Tap the map to set your start.</p>
 
       <div data-rpane="auto">
-        <p class="fine">Finds the shortest route that stays in water deep enough for your boat and keeps clear of charted rocks, wrecks and obstructions. Up to 60 nm.</p>
-        <div class="row">
-          <label class="field small">Draft (ft)<input id="auto-draft" type="number" inputmode="decimal" min="0.5" max="30" step="0.5" value="6" /></label>
-          <label class="field small">Safety margin (ft)<input id="auto-margin" type="number" inputmode="decimal" min="0" max="20" step="0.5" value="3" /></label>
+        <div class="nav-actions"><button class="btn" id="auto-go">Find route</button><button class="btn ghost" data-clear-ends>Clear</button></div>
+        <div class="nav-more">
+          <div class="row">
+            <label class="field small">Draft (ft)<input id="auto-draft" type="number" inputmode="decimal" min="0.5" max="30" step="0.5" value="6" /></label>
+            <label class="field small">Safety margin (ft)<input id="auto-margin" type="number" inputmode="decimal" min="0" max="20" step="0.5" value="3" /></label>
+          </div>
         </div>
-        <div class="row"><button class="btn" id="auto-go">Find safe route</button><button class="btn ghost" data-clear-ends>Clear</button></div>
         <div id="auto-result"></div>
       </div>
 
       <div data-rpane="passage" hidden>
-        <p class="fine">Weather routing for offshore passages (e.g. Newport → BVI): picks the fastest route through the forecast wind and ocean currents, avoiding land.</p>
-        <div class="row">
-          <label class="field">Departure<input id="passage-depart" type="datetime-local" /></label>
+        <div class="nav-actions"><button class="btn" id="passage-go">Calculate</button><button class="btn ghost" data-clear-ends>Clear</button></div>
+        <div class="nav-more">
+          <div class="row"><label class="field">Departure<input id="passage-depart" type="datetime-local" /></label></div>
+          <label class="toggle"><input type="checkbox" id="passage-motor" checked /><span class="sw"></span><span><b>Motor in light air</b><small>6.5 kn when wind is below the value set</small></span></label>
+          <div class="row"><label class="field small">Motor below (kn wind)<input id="passage-motor-kn" type="number" inputmode="decimal" min="0" max="15" step="1" value="6" /></label></div>
         </div>
-        <label class="toggle"><input type="checkbox" id="passage-motor" checked /><span class="sw"></span><span><b>Motor in light air</b><small>Motor at 6.5 kn when wind is below the value set</small></span></label>
-        <div class="row">
-          <label class="field small">Motor below (kn wind)<input id="passage-motor-kn" type="number" inputmode="decimal" min="0" max="15" step="1" value="6" /></label>
-        </div>
-        <div class="row"><button class="btn" id="passage-go">Calculate passage</button><button class="btn ghost" data-clear-ends>Clear</button></div>
         <div id="passage-result"></div>
       </div>
 
       <div data-rpane="manual" hidden>
-        <p class="fine">Tap the map to add waypoints yourself.</p>
-        <div class="row">
-          <label class="field small">Speed (kn)<input id="route-speed" type="number" inputmode="decimal" min="0.5" max="60" step="0.5" value="6" /></label>
-          <button class="btn ghost" id="route-undo">Undo</button>
-          <button class="btn ghost" id="route-clear">Clear</button>
+        <div class="nav-actions"><button class="btn ghost" id="route-undo">Undo</button><button class="btn ghost" id="route-clear">Clear</button></div>
+        <div class="nav-more">
+          <div class="row"><label class="field small">Speed (kn)<input id="route-speed" type="number" inputmode="decimal" min="0.5" max="60" step="0.5" value="6" /></label></div>
         </div>
         <div id="route-summary"></div>
       </div>
@@ -131,7 +131,7 @@
         <label class="field small">Length (ft)<input name="loa" type="number" inputmode="decimal" min="1" max="600" step="0.1" /></label>
         <label class="field small">Beam (ft)<input name="beam" type="number" inputmode="decimal" min="1" max="200" step="0.1" /></label>
         <label class="field small">Draft (ft)<input name="draft" type="number" inputmode="decimal" min="0.1" max="60" step="0.1" /></label>
-        <label class="field">Engine<input name="engine" maxlength="80" placeholder="e.g. Yanmar 4JH80" /></label>
+        <label class="field">Engine<input name="engine" maxlength="80" placeholder="Make and model" /></label>
         <label class="field small">Cruising speed (kn)<input name="speed" type="number" inputmode="decimal" min="0.5" max="60" step="0.5" /></label>
         <button class="btn" type="submit">Save boat</button>
       </form>
