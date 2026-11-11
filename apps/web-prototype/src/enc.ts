@@ -16,12 +16,22 @@ const SCALES = [
   { svc: 'enc_coastal', rock: 31, sounding: 61, depthArea: 166 },
 ] as const;
 
-async function query<T>(svc: string, layer: number, params: Record<string, string>, timeoutMs = 15000): Promise<T> {
+async function query<T>(svc: string, layer: number, params: Record<string, string>, timeoutMs = 10000): Promise<T> {
   const qs = new URLSearchParams({ inSR: '4326', outSR: '4326', spatialRel: 'esriSpatialRelIntersects', f: 'json', ...params });
-  const res = await fetch(`${BASE}/${svc}/MapServer/${layer}/query?${qs}`, { signal: AbortSignal.timeout(timeoutMs) });
-  const j = await res.json();
-  if (j.error) throw new Error(j.error.message ?? 'ENC query failed');
-  return j as T;
+  let lastErr: unknown;
+  // NOAA's server intermittently answers "Could not find service"; a retry usually succeeds.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(`${BASE}/${svc}/MapServer/${layer}/query?${qs}`, { signal: AbortSignal.timeout(timeoutMs) });
+      const j = await res.json();
+      if (j.error) throw new Error(j.error.message ?? 'ENC query failed');
+      return j as T;
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+    }
+  }
+  throw lastErr ?? new Error('ENC query failed');
 }
 
 interface EsriPoint { attributes: Record<string, unknown>; geometry?: { x: number; y: number; z?: number } }
@@ -77,11 +87,15 @@ export async function depthAt(p: LatLon): Promise<DepthInfo> {
   const env = JSON.stringify({ xmin: p.lon - d * 1.35, ymin: p.lat - d, xmax: p.lon + d * 1.35, ymax: p.lat + d, spatialReference: { wkid: 4326 } });
 
   let anyAnswered = false;
-  for (const sc of SCALES) {
+  // query all chart scales at once; use the most detailed one that has data here
+  const results = await Promise.all(SCALES.map(async (sc) => {
     const [area, snd] = await Promise.all([
       query<{ features: EsriPoint[] }>(sc.svc, sc.depthArea, { geometry: pt, geometryType: 'esriGeometryPoint', outFields: 'DRVAL1,DRVAL2', returnGeometry: 'false' }).catch(() => null),
       query<{ features: EsriPoint[] }>(sc.svc, sc.sounding, { where: '1=1', geometry: env, geometryType: 'esriGeometryEnvelope', outFields: 'Z', returnGeometry: 'true', returnZ: 'true', resultRecordCount: '300' }).catch(() => null),
     ]);
+    return { sc, area, snd };
+  }));
+  for (const { sc, area, snd } of results) {
     if (area || snd) anyAnswered = true;
     const a = area?.features.at(0)?.attributes;
     let sounding: DepthInfo['sounding'] = null;
