@@ -1,0 +1,8 @@
+{
+  "name": "@navigator/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/tokens.ts" },
+  "scripts": { "typecheck": "tsc -p .", "test": "echo 'no tests yet'" }
+}

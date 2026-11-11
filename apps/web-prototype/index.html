@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0B1F3F" />
+  <title>Navigator Marine — Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><span class="mark" aria-hidden="true">✦</span><span class="word">Navigator</span><span class="tag">Prototype</span></div>
+      <button class="icon-btn" id="btn-layers" aria-label="Map layers">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 13 10 5 10-5"/></svg>
+      </button>
+    </header>
+
+    <div id="map" role="region" aria-label="Map"></div>
+    <div class="hint" id="hint">Tap the water for conditions</div>
+
+    <!-- Layers sheet -->
+    <section class="sheet" id="sheet-layers" hidden>
+      <div class="sheet-head"><h2>Map layers</h2><button class="close" data-close="sheet-layers" aria-label="Close">✕</button></div>
+      <div class="layer-list">
+        <label class="toggle"><input type="checkbox" data-layer="seamarks" checked /><span class="sw"></span><span><b>Navigation marks</b><small>Buoys, beacons, lights · OpenSeaMap</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="marina" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#1F7A8C"></i>Marinas</b><small>OpenStreetMap · unverified</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="fuel" checked /><span class="sw"></span><span><b><i class="dot" style="--c:#E0A100"></i>Fuel docks</b><small>OpenStreetMap · unverified</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="pumpout" /><span class="sw"></span><span><b><i class="dot" style="--c:#6B5CA5"></i>Pump-out</b><small>OpenStreetMap · unverified</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="anchorage" /><span class="sw"></span><span><b><i class="dot" style="--c:#1E8E5A"></i>Anchorages</b><small>OpenStreetMap · unverified</small></span></label>
+        <label class="toggle"><input type="checkbox" data-layer="ramp" /><span class="sw"></span><span><b><i class="dot" style="--c:#C8322B"></i>Boat ramps</b><small>OpenStreetMap · unverified</small></span></label>
+        <label class="toggle disabled"><input type="checkbox" disabled /><span class="sw"></span><span><b>AIS vessels</b><small>Not connected yet — needs an AIS data supplier</small></span></label>
+      </div>
+      <p class="fine">Places appear when you zoom in to harbor level.</p>
+    </section>
+
+    <!-- Detail sheet (conditions / place) -->
+    <section class="sheet" id="sheet-detail" hidden>
+      <div class="sheet-head"><h2 id="detail-title">Conditions</h2><button class="close" data-close="sheet-detail" aria-label="Close">✕</button></div>
+      <div id="detail-body"></div>
+    </section>
+
+    <!-- Tab panels -->
+    <section class="panel" id="panel-navigate" hidden>
+      <div class="panel-head"><h2>Plan a route</h2><span class="badge warn">Planning aid only</span></div>
+      <p class="fine">Tap the map to add waypoints. Not for navigation; always check official charts.</p>
+      <div class="row">
+        <label class="field small">Speed (kn)<input id="route-speed" type="number" inputmode="decimal" min="0.5" max="60" step="0.5" value="6" /></label>
+        <button class="btn ghost" id="route-undo">Undo</button>
+        <button class="btn ghost" id="route-clear">Clear</button>
+      </div>
+      <div id="route-summary"></div>
+    </section>
+
+    <section class="panel" id="panel-vessels" hidden>
+      <div class="panel-head"><h2>Vessels</h2><span class="badge">Not connected</span></div>
+      <label class="field">Search by name, MMSI or IMO<input disabled placeholder="Available once AIS is connected" /></label>
+      <p>Live ship positions need a paid or partner AIS data feed. Nothing is shown here until a real feed is connected; we won't display made-up positions.</p>
+      <p class="fine">Next step: request quotes from AIS suppliers (see the Stage 1 plan, decision 7).</p>
+    </section>
+
+    <section class="panel" id="panel-services" hidden>
+      <div class="panel-head"><h2>Nearby</h2><span class="badge">From OpenStreetMap</span></div>
+      <div class="chips" id="svc-chips"></div>
+      <div id="svc-list"><p class="fine">Zoom the map in to a harbor to see places.</p></div>
+      <p class="fine">Listings are community data and unverified. Business profiles, reviews and quotes come in a later stage.</p>
+    </section>
+
+    <section class="panel" id="panel-boat" hidden>
+      <div class="panel-head"><h2>My boat</h2><span class="badge">Saved on this device</span></div>
+      <form id="boat-form" class="grid">
+        <label class="field">Name<input name="name" maxlength="80" required /></label>
+        <label class="field">Builder<input name="builder" maxlength="80" /></label>
+        <label class="field">Model<input name="model" maxlength="80" /></label>
+        <label class="field small">Year<input name="year" type="number" inputmode="numeric" min="1850" max="2100" /></label>
+        <label class="field small">Length (ft)<input name="loa" type="number" inputmode="decimal" min="1" max="600" step="0.1" /></label>
+        <label class="field small">Beam (ft)<input name="beam" type="number" inputmode="decimal" min="1" max="200" step="0.1" /></label>
+        <label class="field small">Draft (ft)<input name="draft" type="number" inputmode="decimal" min="0.1" max="60" step="0.1" /></label>
+        <label class="field">Engine<input name="engine" maxlength="80" placeholder="e.g. Yanmar 4JH80" /></label>
+        <label class="field small">Cruising speed (kn)<input name="speed" type="number" inputmode="decimal" min="0.5" max="60" step="0.5" /></label>
+        <button class="btn" type="submit">Save boat</button>
+      </form>
+      <div id="boat-card"></div>
+    </section>
+
+    <nav class="tabbar" aria-label="Main">
+      <button data-tab="explore" class="active"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/></svg><span>Explore</span></button>
+      <button data-tab="navigate"><svg viewBox="0 0 24 24"><path d="M5 19 19 5"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="12" cy="12" r="2"/></svg><span>Navigate</span></button>
+      <button data-tab="vessels"><svg viewBox="0 0 24 24"><path d="M3 17h18l-2 3H5l-2-3Z"/><path d="M12 3v11M12 4l6 8h-6"/></svg><span>Vessels</span></button>
+      <button data-tab="services"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.5-.5-2.5 2.5-2.5Z"/></svg><span>Services</span></button>
+      <button data-tab="boat"><svg viewBox="0 0 24 24"><path d="M12 3 4 15h16L12 3Z"/><path d="M2 18c3 2 6 2 10 0s7-2 10 0"/></svg><span>My Boat</span></button>
+    </nav>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.expo/
+.next/
+dist/
+*.log
+apps/web-prototype/dist/
