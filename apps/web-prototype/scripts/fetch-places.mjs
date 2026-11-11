@@ -24,12 +24,24 @@ const KEEP = /^(name|seamark:name|leisure|waterway|amenity|boat|seamark:type|pho
 let data = null, lastErr = null;
 for (const url of endpoints) {
   try {
-    const res = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: query }), headers: { 'User-Agent': 'NavigatorMarinePrototype/0.1 (github.com/cgronning/Navigator-Marine-)' }, signal: AbortSignal.timeout(200000) });
+    const res = await fetch(url, { method: 'POST', body: new URLSearchParams({ data: query }), headers: { 'User-Agent': 'NavigatorMarinePrototype/0.1 (github.com/cgronning/Navigator-Marine-)' }, signal: AbortSignal.timeout(90000) });
     if (!res.ok) throw new Error(`${url} HTTP ${res.status}`);
     data = await res.json();
     console.log(`Got ${data.elements.length} elements from ${url}`);
     break;
   } catch (e) { lastErr = e; console.warn(String(e)); }
+}
+
+// If every server failed, keep the copy that's already live on the site
+if (!data) {
+  try {
+    const prev = await fetch('https://cgronning.github.io/Navigator-Marine-/places.json', { signal: AbortSignal.timeout(30000) }).then((r) => r.json());
+    if (prev && Array.isArray(prev.elements) && prev.elements.length) {
+      writeFileSync(new URL('../public/places.json', import.meta.url), JSON.stringify(prev));
+      console.log(`Servers unavailable; kept previous snapshot from ${prev.fetchedAt} (${prev.elements.length} places)`);
+      process.exit(0);
+    }
+  } catch (e) { console.warn('No previous snapshot available: ' + e); }
 }
 
 const out = { source: 'OpenStreetMap contributors (ODbL)', region: BBOX, fetchedAt: new Date().toISOString(), error: null, elements: [] };
