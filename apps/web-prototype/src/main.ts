@@ -26,8 +26,8 @@ const style: StyleSpecification = {
   sources: {
     base: {
       type: 'raster', tileSize: 256, maxzoom: 19,
-      tiles: ['a', 'b', 'c', 'd'].map((s) => `https://${s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png`),
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     },
     seamarks: {
       type: 'raster', tileSize: 256, minzoom: 6, maxzoom: 18,
@@ -73,7 +73,7 @@ map.on('error', (e) => {
     if (baseTileErrors >= 4 && !usingFallback) {
       usingFallback = true;
       const src = map.getSource('base') as maplibregl.RasterTileSource | undefined;
-      src?.setTiles(['https://tile.openstreetmap.org/{z}/{x}/{y}.png']);
+      src?.setTiles(['https://tile.openstreetmap.de/{z}/{x}/{y}.png']);
       setStatus('Switched to backup map tiles', false);
       return;
     }
