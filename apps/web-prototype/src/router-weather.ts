@@ -45,29 +45,58 @@ export function polarSpeed(tws: number, twa: number): number {
 interface Grid { s: number; w: number; step: number; rows: number; cols: number; t0: number; dtH: number; nt: number; u: Float32Array; v: Float32Array }
 // u,v: [t][r][c] in knots, toward east/north
 
-async function fetchBatches(urlFor: (lats: string, lons: string) => string, pts: [number, number][]) {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchBatches(urlFor: (lats: string, lons: string) => string, pts: [number, number][], label: string, onProgress: (m: string) => void) {
   const out: unknown[] = [];
-  for (let i = 0; i < pts.length; i += 80) {
-    const chunk = pts.slice(i, i + 80);
+  for (let i = 0; i < pts.length; i += 60) {
+    const chunk = pts.slice(i, i + 60);
     const url = urlFor(chunk.map((p) => p[0].toFixed(2)).join(','), chunk.map((p) => p[1].toFixed(2)).join(','));
     let j: unknown = null;
-    for (let a = 0; a < 3 && j === null; a++) {
-      try { const r = await fetch(url, { signal: AbortSignal.timeout(45000) }); if (r.ok) j = await r.json(); } catch { /* retry */ }
+    for (let a = 0; a < 4 && j === null; a++) {
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(45000) });
+        if (r.status === 429) {
+          // free forecast tier: per-minute limit. Wait it out instead of failing.
+          for (let sec = 62; sec > 0; sec -= 2) { onProgress(`Free forecast limit reached; continuing in ${sec}s… (${label})`); await sleep(2000); }
+          continue;
+        }
+        if (r.ok) j = await r.json();
+      } catch { await sleep(1500); }
     }
-    if (j === null) throw new Error('Forecast download failed');
+    if (j === null) throw new Error(`Couldn’t download the ${label} forecast. Check your connection and try again.`);
     out.push(...(Array.isArray(j) ? j : [j]));
+    onProgress(`Downloading ${label} forecast… ${Math.min(100, Math.round(((i + chunk.length) / pts.length) * 100))}%`);
   }
   return out as { hourly: Record<string, (number | null)[] | string[]> }[];
 }
 
-async function buildGrids(s: number, w: number, n: number, e: number, step: number, onProgress: (m: string) => void) {
+const gridCache = new Map<string, Promise<Awaited<ReturnType<typeof buildGridsUncached>>>>();
+function buildGrids(s: number, w: number, n: number, e: number, step: number, corridor: (lat: number, lon: number) => boolean, onProgress: (m: string) => void) {
+  const key = [s, w, n, e, step, new Date().toISOString().slice(0, 13)].join(',');
+  if (!gridCache.has(key)) gridCache.set(key, buildGridsUncached(s, w, n, e, step, corridor, onProgress).catch((err) => { gridCache.delete(key); throw err; }));
+  return gridCache.get(key)!;
+}
+
+async function buildGridsUncached(s: number, w: number, n: number, e: number, step: number, corridor: (lat: number, lon: number) => boolean, onProgress: (m: string) => void) {
   const rows = Math.round((n - s) / step) + 1, cols = Math.round((e - w) / step) + 1;
+  // Only download grid points in a corridor along the route; others copy their nearest downloaded point.
   const pts: [number, number][] = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) pts.push([s + r * step, w + c * step]);
-  onProgress(`Downloading 16-day wind forecast (${pts.length} points)…`);
-  const wind = await fetchBatches((la, lo) => `https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&forecast_days=16&timezone=GMT`, pts);
-  onProgress('Downloading ocean current forecast…');
-  const cur = await fetchBatches((la, lo) => `https://marine-api.open-meteo.com/v1/marine?latitude=${la}&longitude=${lo}&hourly=ocean_current_velocity,ocean_current_direction&forecast_days=10&timezone=GMT`, pts).catch(() => null);
+  const idxOf = new Int32Array(rows * cols).fill(-1);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const la = s + r * step, lo = w + c * step;
+    if (corridor(la, lo)) { idxOf[r * cols + c] = pts.length; pts.push([la, lo]); }
+  }
+  if (!pts.length) throw new Error('Route area too small for the forecast grid.');
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    if (idxOf[r * cols + c]! >= 0) continue;
+    let best = 0, bd = Infinity;
+    pts.forEach(([la, lo], k) => { const d = (la - (s + r * step)) ** 2 + (lo - (w + c * step)) ** 2; if (d < bd) { bd = d; best = k; } });
+    idxOf[r * cols + c] = -2 - best; // negative: copy from point `best`
+  }
+  const src = (k: number) => { const v = idxOf[k]!; return v >= 0 ? v : -2 - v; };
+  const wind = await fetchBatches((la, lo) => `https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&forecast_days=16&timezone=GMT`, pts, 'wind', onProgress);
+  const cur = await fetchBatches((la, lo) => `https://marine-api.open-meteo.com/v1/marine?latitude=${la}&longitude=${lo}&hourly=ocean_current_velocity,ocean_current_direction&forecast_days=7&timezone=GMT`, pts, 'ocean current', onProgress).catch(() => null);
   const times = wind[0]!.hourly['time'] as string[];
   const dtH = 3, nt = Math.floor(times.length / dtH);
   const t0 = Date.parse(times[0]! + ':00Z');
@@ -75,9 +104,10 @@ async function buildGrids(s: number, w: number, n: number, e: number, step: numb
   const wg: Grid = { s, w, step, rows, cols, t0, dtH, nt, u: mk(), v: mk() };
   const cg: Grid = { s, w, step, rows, cols, t0, dtH, nt, u: mk(), v: mk() };
   const curTimes = cur?.[0]?.hourly['time'] as string[] | undefined;
-  for (let k = 0; k < pts.length; k++) {
-    const sp = wind[k]!.hourly['wind_speed_10m'] as (number | null)[], dr = wind[k]!.hourly['wind_direction_10m'] as (number | null)[];
-    const cs = cur?.[k]?.hourly['ocean_current_velocity'] as (number | null)[] | undefined, cd = cur?.[k]?.hourly['ocean_current_direction'] as (number | null)[] | undefined;
+  for (let k = 0; k < rows * cols; k++) {
+    const q = src(k);
+    const sp = wind[q]!.hourly['wind_speed_10m'] as (number | null)[], dr = wind[q]!.hourly['wind_direction_10m'] as (number | null)[];
+    const cs = cur?.[q]?.hourly['ocean_current_velocity'] as (number | null)[] | undefined, cd = cur?.[q]?.hourly['ocean_current_direction'] as (number | null)[] | undefined;
     for (let t = 0; t < nt; t++) {
       const h = t * dtH, i = t * rows * cols + k;
       const S = sp[h] ?? 0, D = ((dr[h] ?? 0) * Math.PI) / 180; // wind FROM D
@@ -151,8 +181,18 @@ export async function passageRoute(start: LatLon, end: LatLon, opt: PassageOptio
   const pad = Math.min(8, Math.max(3, direct / 250));
   const s = Math.floor(Math.min(start.lat, end.lat) - pad), n = Math.ceil(Math.max(start.lat, end.lat) + pad);
   const w = Math.floor(Math.min(start.lon, end.lon) - pad), e = Math.ceil(Math.max(start.lon, end.lon) + pad);
-  const step = direct > 800 ? 1 : 0.5;
-  const [grids, isLand] = await Promise.all([buildGrids(s, w, n, e, step, onProgress), landMask(s, w, n, e)]);
+  const step = direct > 1200 ? 1.5 : direct > 400 ? 1 : 0.5;
+  // corridor: points within this distance of the straight line between start and end
+  const corridorNm = Math.max(100, Math.min(300, direct * 0.2)) + step * 30;
+  // fast flat-earth distance to the start-end line (fine for a corridor test)
+  const kx = 60 * Math.cos((((start.lat + end.lat) / 2) * Math.PI) / 180), ky = 60;
+  const ax = start.lon * kx, ay = start.lat * ky, bx = end.lon * kx, by = end.lat * ky, abx = bx - ax, aby = by - ay, ab2 = abx * abx + aby * aby;
+  const corridor = (lat: number, lon: number) => {
+    const px = lon * kx - ax, py = lat * ky - ay;
+    const t = Math.max(0, Math.min(1, (px * abx + py * aby) / ab2));
+    return Math.hypot(px - abx * t, py - aby * t) <= corridorNm;
+  };
+  const [grids, isLand] = await Promise.all([buildGrids(s, w, n, e, step, corridor, onProgress), landMask(s, w, n, e)]);
   onProgress('Calculating fastest route…');
 
   const dtH = direct > 600 ? 3 : direct > 150 ? 2 : 1;
@@ -195,6 +235,7 @@ export async function passageRoute(start: LatLon, end: LatLon, opt: PassageOptio
           continue;
         }
         const [la, lo] = move(nd.lat, nd.lon, cog, stepNm);
+        if (!corridor(la, lo)) continue; // stay where we have forecast data
         if (!legClear([nd.lat, nd.lon], [la, lo])) continue;
         const dStart = distanceNm(start, { lat: la, lon: lo });
         const relBrg = ((bearing(start, { lat: la, lon: lo }) - startBrg + 540) % 360) - 180;

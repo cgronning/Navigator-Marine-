@@ -245,6 +245,10 @@ function setStatus(msg: string, isError = false) {
 // ------------------------------------------------------------------ map layers on load
 map.once('style.load', () => {
   restyleBase();
+  // Worldwide ocean depth shading (Esri World Ocean Base) under the labels; NOAA chart draws on top in US waters
+  const firstLabel = map.getStyle().layers?.find((l) => l.type === 'symbol')?.id;
+  map.addSource('ocean', { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 13, attribution: 'Ocean depth shading: Esri, GEBCO, NOAA, Garmin' });
+  map.addLayer({ id: 'ocean', type: 'raster', source: 'ocean', paint: { 'raster-opacity': 0.9 } }, firstLabel);
   map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 256, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
   map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: 'visible' } });
   map.addSource('seamarks', { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256, minzoom: 6, maxzoom: 18, attribution: 'Marks © OpenSeaMap' });
@@ -322,7 +326,7 @@ async function showConditions(p: LatLon) {
   depthAt(p).then((d) => {
     depthDone = true;
     const el = document.getElementById('depth-block'); if (!el) return;
-    if (d.onLand) { el.innerHTML = `<div class="depth-main"><small>Charted depth</small><b>No chart depth here</b><span class="fine">Land, or outside NOAA chart coverage</span></div>`; return; }
+    if (d.onLand) { el.innerHTML = `<div class="depth-main"><small>Charted depth</small><b>No chart depth here</b><span class="fine">On land, or outside NOAA chart coverage (US waters only for now)</span></div>`; return; }
     const range = d.areaMinFt !== null && d.areaMaxFt !== null ? `${Math.round(d.areaMinFt)}–${Math.round(d.areaMaxFt)} ft` : null;
     const shallow = (d.areaMinFt ?? 99) < 6;
     el.innerHTML = `<div class="depth-main ${shallow ? 'shallow' : ''}"><small>Charted depth</small><b>${range ?? (d.sounding ? `${d.sounding.ft.toFixed(0)} ft` : '—')}</b>

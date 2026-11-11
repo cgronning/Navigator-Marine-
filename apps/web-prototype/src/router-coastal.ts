@@ -154,7 +154,7 @@ async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions,
     ]);
     return { depth, dredged, land: [...land, ...shore], hazards: [...rock, ...obst, ...wreck] };
   }));
-  if (perScale.every((p) => !p.depth || p.depth.length === 0)) throw new RouteError('No NOAA chart depth data for this area (or the chart server is down). Try again in a moment.');
+  if (perScale.every((p) => !p.depth || p.depth.length === 0)) throw new RouteError('No NOAA chart depth data here. Auto routing currently works in US waters only (or the chart server is down; try again in a moment).');
 
   // ---- paint the grid: R = navigable, G = shallowest depth (dm, capped)
   onProgress('Mapping safe water…');
