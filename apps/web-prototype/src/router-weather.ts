@@ -235,3 +235,17 @@ export async function passageRoute(start: LatLon, end: LatLon, opt: PassageOptio
     note: arrived ? null : `The forecast only runs ${Math.round((grids.forecastEnd - t0) / 86400e3)} days; the route stops where the forecast ends.`,
   };
 }
+
+/** Passage through several points; each leg departs when the previous one arrives. */
+export async function passageRouteVia(points: LatLon[], opt: PassageOptions, onProgress: (m: string) => void): Promise<PassageResult> {
+  let all: PassagePoint[] = []; let dist = 0; let maxTws = 0, strong = 0, motor = 0; let cur = true; let dep = opt.departure;
+  for (let i = 1; i < points.length; i++) {
+    const legName = points.length > 2 ? `Leg ${i} of ${points.length - 1}: ` : '';
+    const r = await passageRoute(points[i - 1]!, points[i]!, { ...opt, departure: dep }, (m) => onProgress(legName + m));
+    all = all.length ? [...all, ...r.points.slice(1)] : r.points;
+    dist += r.distanceNm; maxTws = Math.max(maxTws, r.maxTws); strong += r.strongHours; motor += r.motorHours; cur = cur && r.currentIncluded;
+    if (!r.arrived) return { points: all, distanceNm: dist, hours: (all.at(-1)!.t - all[0]!.t) / 3600e3, arrived: false, maxTws, strongHours: strong, motorHours: motor, currentIncluded: cur, note: `${legName}${r.note ?? 'Did not arrive.'}` };
+    dep = new Date(r.points.at(-1)!.t);
+  }
+  return { points: all, distanceNm: dist, hours: (all.at(-1)!.t - all[0]!.t) / 3600e3, arrived: true, maxTws, strongHours: strong, motorHours: motor, currentIncluded: cur, note: null };
+}

@@ -84,6 +84,23 @@ export interface CoastalResult {
 
 export class RouteError extends Error {}
 
+/** Route through several points in order (start, any waypoints, destination). */
+export async function coastalRouteVia(points: LatLon[], opt: CoastalOptions, onProgress: (msg: string) => void): Promise<CoastalResult> {
+  const path: LatLon[] = []; let dist = 0; let shallow: number | null = null; let snapped = { start: 0, end: 0 }; let cell = 0;
+  for (let i = 1; i < points.length; i++) {
+    const legName = points.length > 2 ? `Leg ${i} of ${points.length - 1}: ` : '';
+    let r: CoastalResult;
+    try { r = await coastalRoute(points[i - 1]!, points[i]!, opt, (m) => onProgress(legName + m)); }
+    catch (e) { throw new RouteError(legName + (e instanceof Error ? e.message : 'failed')); }
+    path.push(...(i === 1 ? r.path : r.path.slice(1)));
+    dist += r.distanceNm; cell = Math.max(cell, r.gridCellM);
+    if (r.shallowestFt !== null) shallow = shallow === null ? r.shallowestFt : Math.min(shallow, r.shallowestFt);
+    if (i === 1) snapped.start = r.snapped.start;
+    snapped.end = r.snapped.end;
+  }
+  return { path, distanceNm: dist, shallowestFt: shallow, snapped, gridCellM: cell };
+}
+
 export async function coastalRoute(start: LatLon, end: LatLon, opt: CoastalOptions, onProgress: (msg: string) => void): Promise<CoastalResult> {
   const span = distanceNm(start, end);
   if (span > 60) throw new RouteError('That’s more than 60 nm. Use Passage routing for longer trips.');
@@ -144,19 +161,28 @@ async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions,
   const cv = new OffscreenCanvas(W, H);
   const ctx = cv.getContext('2d', { willReadFrequently: true })!;
   ctx.fillStyle = 'rgb(0,0,0)'; ctx.fillRect(0, 0, W, H);
-  const fillRings = (rings: number[][][], color: string) => {
-    ctx.fillStyle = color; ctx.beginPath();
+  // Chart cells meet along shared edges; filling each polygon separately leaves hairline
+  // anti-aliased seams that would look like walls. So: paint deep-enough areas with a thin
+  // matching outline (closes seams), then paint too-shallow areas on top without one
+  // (keeps every shallow boundary conservative), then land.
+  const ringPath = (rings: number[][][]) => {
+    ctx.beginPath();
     for (const ring of rings) ring.forEach(([lon, lat], i) => { const [x, y] = toPx(lat!, lon!); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
-    ctx.fill('evenodd');
   };
   for (const sc of perScale) {
-    for (const f of [...(sc.depth ?? []), ...sc.dredged]) {
-      const d1 = typeof f.attributes['DRVAL1'] === 'number' ? (f.attributes['DRVAL1'] as number) : -1;
-      const ok = d1 >= needM;
+    const areas = [...(sc.depth ?? []), ...sc.dredged].map((f) => ({ f, d1: typeof f.attributes['DRVAL1'] === 'number' ? (f.attributes['DRVAL1'] as number) : -1 }));
+    ctx.lineWidth = 1.6; ctx.lineJoin = 'round';
+    for (const { f, d1 } of areas) {
+      if (d1 < needM || !f.geometry?.rings) continue;
       const g = Math.max(0, Math.min(255, Math.round(d1 * 10)));
-      if (f.geometry?.rings) fillRings(f.geometry.rings, ok ? `rgb(255,${g},0)` : `rgb(0,${g},0)`);
+      ringPath(f.geometry.rings); ctx.fillStyle = ctx.strokeStyle = `rgb(255,${g},0)`; ctx.fill('evenodd'); ctx.stroke();
     }
-    for (const f of sc.land) if (f.geometry?.rings) fillRings(f.geometry.rings, 'rgb(0,0,0)');
+    for (const { f, d1 } of areas) {
+      if (d1 >= needM || !f.geometry?.rings) continue;
+      const g = Math.max(0, Math.min(255, Math.round(Math.max(0, d1) * 10)));
+      ringPath(f.geometry.rings); ctx.fillStyle = `rgb(0,${g},0)`; ctx.fill('evenodd');
+    }
+    for (const f of sc.land) if (f.geometry?.rings) { ringPath(f.geometry.rings); ctx.fillStyle = 'rgb(0,0,0)'; ctx.fill('evenodd'); }
   }
   // hazards: buffer around anything not known to be deep enough
   const bufPx = Math.max(1.5, opt.hazardBufferM / cell);

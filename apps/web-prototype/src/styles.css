@@ -231,3 +231,6 @@ details.more summary::after { content: ' ▾'; }
 details.more[open] summary::after { content: ' ▴'; }
 .nav-panel #route-summary .fine, .nav-panel #route-summary table { font-size: 13px; }
 .tight { margin: 6px 2px 0; }
+.nav-actions .btn.ghost { flex: 0 0 auto; padding: 0 14px; }
+.btn:disabled { opacity: .6; }
+#boat-form[hidden] { display: none; }

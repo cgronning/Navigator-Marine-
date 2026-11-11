@@ -9,8 +9,8 @@ import {
 import { rocksInView, depthAt, WATLEV_LABEL, type Rock } from './enc.ts';
 import { WindLayer, fetchWindGrid, speedColor, LEGEND_STOPS } from './wind.ts';
 import { BoatTracker } from './boat.ts';
-import { coastalRoute, RouteError } from './router-coastal.ts';
-import { passageRoute } from './router-weather.ts';
+import { coastalRoute, coastalRouteVia, RouteError } from './router-coastal.ts';
+import { passageRouteVia } from './router-weather.ts';
 import { fetchCurrentGrid, currentColor, CURRENT_LEGEND, nearestCurrent } from './currents.ts';
 
 // ------------------------------------------------------------------ helpers
@@ -33,7 +33,7 @@ const KIND_COLOR: Record<PlaceKind, string> = { marina: '#1F7A8C', fuel: '#E0A10
 const BASE_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const NOAA_CHART_WMS = 'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/NOAAChartDisplay/MapServer/exts/MaritimeChartService/WMSServer'
   + '?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=0,1,2,3,4,5,6,7&STYLES=&CRS=EPSG:3857'
-  + '&BBOX={bbox-epsg-3857}&WIDTH=512&HEIGHT=512&FORMAT=image/png&TRANSPARENT=TRUE';
+  + '&BBOX={bbox-epsg-3857}&WIDTH=420&HEIGHT=420&FORMAT=image/png&TRANSPARENT=TRUE';
 
 
 const saved = store.get<{ center: [number, number]; zoom: number }>('nav.view');
@@ -245,7 +245,7 @@ function setStatus(msg: string, isError = false) {
 // ------------------------------------------------------------------ map layers on load
 map.once('style.load', () => {
   restyleBase();
-  map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 256, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
+  map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 512, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
   map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: 'visible' } });
   map.addSource('seamarks', { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256, minzoom: 6, maxzoom: 18, attribution: 'Marks © OpenSeaMap' });
   map.addLayer({ id: 'seamarks', type: 'raster', source: 'seamarks', layout: { visibility: 'none' } });
@@ -272,7 +272,8 @@ map.once('style.load', () => {
   map.addLayer({ id: 'autoroute-casing', type: 'line', source: 'autoroute', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#FFFFFF', 'line-width': 7, 'line-opacity': 0.9 } });
   map.addLayer({ id: 'autoroute', type: 'line', source: 'autoroute', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': 4 } });
   map.addSource('ends', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-  map.addLayer({ id: 'ends', type: 'circle', source: 'ends', paint: { 'circle-radius': 9, 'circle-color': ['match', ['get', 'role'], 'start', '#1E8E5A', '#C8322B'], 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 3 } });
+  map.addLayer({ id: 'ends-line', type: 'line', source: 'ends', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#0B1F3F', 'line-width': 2, 'line-dasharray': [2, 2], 'line-opacity': 0.6 } });
+  map.addLayer({ id: 'ends', type: 'circle', source: 'ends', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': ['match', ['get', 'role'], 'via', 7, 9], 'circle-color': ['match', ['get', 'role'], 'start', '#1E8E5A', 'end', '#C8322B', '#0B1F3F'], 'circle-stroke-color': '#FFFFFF', 'circle-stroke-width': 3 } });
   map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addLayer({ id: 'route-line', type: 'line', source: 'route', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#0B1F3F', 'line-width': 3, 'line-dasharray': [2, 1.5] } });
   map.addLayer({ id: 'route-pts', type: 'circle', source: 'route', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 7, 'circle-color': '#FBF8F1', 'circle-stroke-color': '#0B1F3F', 'circle-stroke-width': 3 } });
@@ -474,16 +475,21 @@ const form = $('#boat-form') as HTMLFormElement;
 function renderBoat() {
   const b = store.get<Boat>('nav.boat');
   const card = $('#boat-card');
-  if (!b) { card.innerHTML = ''; return; }
+  if (!b) { card.innerHTML = ''; form.hidden = false; return; }
   for (const [k, v] of Object.entries(b)) { const inp = form.elements.namedItem(k) as HTMLInputElement | null; if (inp) inp.value = v ?? ''; }
   const spec = [b.loa && `${b.loa} ft LOA`, b.beam && `${b.beam} ft beam`, b.draft && `${b.draft} ft draft`].filter(Boolean).join(' · ');
-  card.innerHTML = `<div class="boat-card"><small>${esc([b.year, b.builder, b.model].filter(Boolean).join(' '))}</small><h3>${esc(b.name)}</h3><p>${esc(spec)}</p>${b.engine ? `<p>${esc(b.engine)}</p>` : ''}</div>`;
+  card.innerHTML = `<div class="boat-card"><small>${esc([b.year, b.builder, b.model].filter(Boolean).join(' '))}</small><h3>${esc(b.name)}</h3><p>${esc(spec)}</p>${b.engine ? `<p>${esc(b.engine)}</p>` : ''}${b.speed ? `<p>Cruising ${esc(b.speed)} kn</p>` : ''}</div>
+    <div class="row"><button class="btn ghost" id="boat-edit" type="button">Edit boat</button></div>`;
+  form.hidden = true;
+  $('#boat-edit').addEventListener('click', () => { form.hidden = false; card.innerHTML = ''; });
   if (b.speed) ($('#route-speed') as HTMLInputElement).value = b.speed;
+  if (Number(b.draft) > 0) { const d = document.getElementById('auto-draft') as HTMLInputElement | null; if (d) d.value = b.draft!; }
 }
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(form).entries()) as unknown as Boat;
   store.set('nav.boat', data);
+  (document.activeElement as HTMLElement | null)?.blur();
   renderBoat();
 });
 
@@ -618,24 +624,30 @@ function setRMode(m: RMode) {
 }
 document.querySelectorAll<HTMLButtonElement>('[data-rmode]').forEach((b) => b.addEventListener('click', () => setRMode(b.dataset.rmode as RMode)));
 function drawEnds() {
-  const src = map.getSource('ends') as GeoJSONSource | undefined; if (!src) return;
+  const src = map.getSource('ends') as GeoJSONSource | undefined;
   const show = tab === 'navigate' && rmode !== 'manual';
-  src.setData({ type: 'FeatureCollection', features: show ? ends.map((p, i) => ({ type: 'Feature', properties: { role: i === 0 ? 'start' : 'end' }, geometry: { type: 'Point', coordinates: [p.lon, p.lat] } })) : [] });
-  $('#ends-text').textContent = rmode === 'manual' ? 'Tap the map to add waypoints.' : ends.length === 0 ? 'Tap the map to set your start.' : ends.length === 1 ? 'Now tap your destination.' : `${distanceNmShort(ends[0]!, ends[1]!)} nm straight line · tap again to restart`;
+  const feats: GeoJSON.Feature[] = [];
+  if (show) {
+    if (ends.length > 1) feats.push({ type: 'Feature', properties: { role: 'line' }, geometry: { type: 'LineString', coordinates: ends.map((p) => [p.lon, p.lat]) } });
+    ends.forEach((p, i) => feats.push({ type: 'Feature', properties: { role: i === 0 ? 'start' : i === ends.length - 1 ? 'end' : 'via' }, geometry: { type: 'Point', coordinates: [p.lon, p.lat] } }));
+  }
+  src?.setData({ type: 'FeatureCollection', features: feats });
+  let total = 0; for (let i = 1; i < ends.length; i++) total += inverse(ends[i - 1]!, ends[i]!).distanceM / METRES_PER_NM;
+  const vias = Math.max(0, ends.length - 2);
+  $('#ends-text').textContent = rmode === 'manual' ? 'Tap the map to add waypoints.'
+    : ends.length === 0 ? 'Tap the map to set your start.'
+    : ends.length === 1 ? 'Tap your destination, or waypoints along the way.'
+    : `Start${vias ? ` + ${vias} waypoint${vias > 1 ? 's' : ''}` : ''} → destination · ${total.toFixed(1)} nm direct`;
 }
-$('#nav-expand').addEventListener('click', () => {
-  const p = $('#panel-navigate'); const compact = p.classList.toggle('compact');
-  $('#nav-expand').setAttribute('aria-expanded', String(!compact));
-});
 const distanceNmShort = (a: LatLon, b: LatLon) => (inverse(a, b).distanceM / METRES_PER_NM).toFixed(1);
 function setAutoRoute(fc: GeoJSON.FeatureCollection) { (map.getSource('autoroute') as GeoJSONSource | undefined)?.setData(fc); }
 function clearAuto() { ends = []; setAutoRoute({ type: 'FeatureCollection', features: [] }); $('#auto-result').innerHTML = ''; $('#passage-result').innerHTML = ''; drawEnds(); setRMode(rmode); }
 document.querySelectorAll<HTMLButtonElement>('[data-clear-ends]').forEach((b) => b.addEventListener('click', clearAuto));
 function addEnd(p: LatLon) {
-  if (ends.length >= 2) { ends = []; setAutoRoute({ type: 'FeatureCollection', features: [] }); }
-  ends.push(p); drawEnds(); setRMode(rmode);
-  if (ends.length === 2) { if (rmode === 'auto') runAuto(); }
+  if (routeBusy) return;
+  ends.push(p); setAutoRoute({ type: 'FeatureCollection', features: [] }); drawEnds();
 }
+document.querySelectorAll<HTMLButtonElement>('[data-undo-ends]').forEach((b) => b.addEventListener('click', () => { if (routeBusy) return; ends.pop(); setAutoRoute({ type: 'FeatureCollection', features: [] }); drawEnds(); }));
 function fitTo(points: LatLon[]) {
   const lats = points.map((p) => p.lat), lons = points.map((p) => p.lon);
   map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: { top: 140, bottom: ($('#panel-navigate').offsetHeight || 200) + 30, left: 40, right: 40 }, duration: 800, maxZoom: 14 });
@@ -643,27 +655,29 @@ function fitTo(points: LatLon[]) {
 function boatDraftFt(): number { const b = store.get<{ draft?: string }>('nav.boat'); const d = Number(b?.draft); return d > 0 ? d : 6; }
 ($('#auto-draft') as HTMLInputElement).value = String(boatDraftFt());
 
+function setBusy(b: boolean) { routeBusy = b; document.querySelectorAll<HTMLButtonElement>('#auto-go, #passage-go').forEach((x) => { x.disabled = b; x.textContent = b ? 'Working…' : x.id === 'auto-go' ? 'Find route' : 'Calculate'; }); }
 async function runAuto() {
-  if (ends.length < 2 || routeBusy) return;
-  routeBusy = true;
   const out = $('#auto-result');
+  if (ends.length < 2) { out.innerHTML = `<p class="fine">Tap a start and a destination first.</p>`; return; }
+  if (routeBusy) return;
+  setBusy(true);
   const draftFt = Number(($('#auto-draft') as HTMLInputElement).value) || 6;
   const marginFt = Number(($('#auto-margin') as HTMLInputElement).value) || 0;
   out.innerHTML = `<div class="loading" id="auto-progress">Starting…</div>`;
   try {
-    const r = await coastalRoute(ends[0]!, ends[1]!, { draftFt, marginFt, hazardBufferM: 50 }, (m) => { const el = document.getElementById('auto-progress'); if (el) el.textContent = m; });
+    const r = await coastalRouteVia(ends, { draftFt, marginFt, hazardBufferM: 50 }, (m) => { const el = document.getElementById('auto-progress'); if (el) el.textContent = m; });
     setAutoRoute({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: { color: '#0B1F3F' }, geometry: { type: 'LineString', coordinates: r.path.map((p) => [p.lon, p.lat]) } }] });
     fitTo(r.path);
     const speed = Number(($('#route-speed') as HTMLInputElement).value) || 6;
     const h = r.distanceNm / speed;
     out.innerHTML = `<div class="totals"><div><b>${r.distanceNm.toFixed(1)} nm</b><small>Route</small></div><div><b>${Math.floor(h)} h ${Math.round((h % 1) * 60)} m</b><small>at ${speed} kn</small></div><div><b>${r.shallowestFt === null ? '—' : `${Math.round(r.shallowestFt)} ft`}</b><small>Shallowest area</small></div></div>
       <p class="fine warn-text tight">Planning aid only — check it against the chart.</p>
-      <details class="more"><summary>Details</summary><p class="fine">Keeps water at least ${draftFt + marginFt} ft deep on the chart (your ${draftFt} ft draft + ${marginFt} ft margin) and stays about 50 m clear of charted rocks, wrecks and obstructions. ${r.path.length - 1} legs.
+      <details class="more"><summary>Details</summary><p class="fine">Keeps water at least ${draftFt + marginFt} ft deep on the chart (your ${draftFt} ft draft + ${marginFt} ft margin) and stays about 50 m clear of charted rocks, wrecks and obstructions. ${r.path.length - 1} turns.
       ${r.snapped.start > 30 || r.snapped.end > 30 ? `<br>Start/end were ${Math.round(Math.max(r.snapped.start, r.snapped.end))} m from deep-enough water; the dashed-in final stretch isn't checked.` : ''}</p>
       <p class="fine warn-text">Planning aid only. Charted depths are at low tide and can be out of date. Check the route against the chart and keep watch.</p></details>`;
   } catch (e) {
     out.innerHTML = `<p class="err">${esc(e instanceof RouteError || e instanceof Error ? e.message : 'Routing failed')}</p>`;
-  } finally { routeBusy = false; }
+  } finally { setBusy(false); }
 }
 $('#auto-go').addEventListener('click', runAuto);
 
@@ -672,13 +686,13 @@ const dep = $('#passage-depart') as HTMLInputElement;
 async function runPassage() {
   if (ends.length < 2) { $('#passage-result').innerHTML = `<p class="fine">Tap a start and a destination first.</p>`; return; }
   if (routeBusy) return;
-  routeBusy = true;
+  setBusy(true);
   const out = $('#passage-result');
   out.innerHTML = `<div class="loading" id="passage-progress">Starting…</div>`;
   const motorOn = ($('#passage-motor') as HTMLInputElement).checked;
   const opt = { departure: new Date(dep.value), motorBelowKn: motorOn ? Number(($('#passage-motor-kn') as HTMLInputElement).value) || 6 : null, motorSpeedKn: 6.5, efficiency: 0.85, maxWindKn: 25 };
   try {
-    const r = await passageRoute(ends[0]!, ends[1]!, opt, (m) => { const el = document.getElementById('passage-progress'); if (el) el.textContent = m; });
+    const r = await passageRouteVia(ends, opt, (m) => { const el = document.getElementById('passage-progress'); if (el) el.textContent = m; });
     const feats: GeoJSON.Feature[] = [];
     for (let i = 1; i < r.points.length; i++) {
       const a = r.points[i - 1]!, b = r.points[i]!;
@@ -699,7 +713,7 @@ async function runPassage() {
       <p class="fine warn-text">Planning aid only. Not a substitute for a professional weather router, official forecasts, or skipper judgement.</p></details>`;
   } catch (e) {
     out.innerHTML = `<p class="err">${esc(e instanceof Error ? e.message : 'Routing failed')}</p>`;
-  } finally { routeBusy = false; }
+  } finally { setBusy(false); }
 }
 $('#passage-go').addEventListener('click', runPassage);
 

@@ -78,7 +78,7 @@
       <p class="nav-status" id="ends-text">Tap the map to set your start.</p>
 
       <div data-rpane="auto">
-        <div class="nav-actions"><button class="btn" id="auto-go">Find route</button><button class="btn ghost" data-clear-ends>Clear</button></div>
+        <div class="nav-actions"><button class="btn" id="auto-go">Find route</button><button class="btn ghost" data-undo-ends>Undo</button><button class="btn ghost" data-clear-ends>Clear</button></div>
         <div class="nav-more">
           <div class="row">
             <label class="field small">Draft (ft)<input id="auto-draft" type="number" inputmode="decimal" min="0.5" max="30" step="0.5" value="6" /></label>
@@ -89,7 +89,7 @@
       </div>
 
       <div data-rpane="passage" hidden>
-        <div class="nav-actions"><button class="btn" id="passage-go">Calculate</button><button class="btn ghost" data-clear-ends>Clear</button></div>
+        <div class="nav-actions"><button class="btn" id="passage-go">Calculate</button><button class="btn ghost" data-undo-ends>Undo</button><button class="btn ghost" data-clear-ends>Clear</button></div>
         <div class="nav-more">
           <div class="row"><label class="field">Departure<input id="passage-depart" type="datetime-local" /></label></div>
           <label class="toggle"><input type="checkbox" id="passage-motor" checked /><span class="sw"></span><span><b>Motor in light air</b><small>6.5 kn when wind is below the value set</small></span></label>
