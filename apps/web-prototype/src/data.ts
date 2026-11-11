@@ -141,10 +141,16 @@ export async function fetchPlaces(bbox: { s: number; w: number; n: number; e: nu
   const b = `${bbox.s.toFixed(4)},${bbox.w.toFixed(4)},${bbox.n.toFixed(4)},${bbox.e.toFixed(4)}`;
   const parts = kinds.flatMap((k) => KIND_QUERIES[k]).map((q) => `${q}(${b});`).join('');
   const query = `[out:json][timeout:25];(${parts});out center tags 400;`;
-  const r = await getJson<{ elements: OverpassEl[] }>('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    body: new URLSearchParams({ data: query }),
-  }, 30000);
+  const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+  let r: { elements: OverpassEl[] } | null = null;
+  let lastErr: unknown = null;
+  for (const url of endpoints) {
+    try {
+      r = await getJson<{ elements: OverpassEl[] }>(url, { method: 'POST', body: new URLSearchParams({ data: query }) }, 20000);
+      break;
+    } catch (e) { lastErr = e; }
+  }
+  if (!r) throw lastErr ?? new Error('Places unavailable');
   const out: Place[] = [];
   for (const el of r.elements) {
     const tags = el.tags ?? {};
