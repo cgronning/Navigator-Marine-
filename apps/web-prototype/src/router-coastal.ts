@@ -62,11 +62,28 @@ export class RouteError extends Error {}
 export async function coastalRoute(start: LatLon, end: LatLon, opt: CoastalOptions, onProgress: (msg: string) => void): Promise<CoastalResult> {
   const span = distanceNm(start, end);
   if (span > 60) throw new RouteError('That’s more than 60 nm. Use Passage routing for longer trips.');
+  // Try a tight search area first; if land (e.g. an island) forces a detour outside it, widen and retry.
+  const spanDeg = Math.max(Math.abs(start.lat - end.lat), Math.abs(start.lon - end.lon));
+  const pads = [Math.max(0.03, spanDeg * 0.3), Math.max(0.08, spanDeg * 0.8), Math.max(0.16, spanDeg * 1.5)];
+  let lastErr: unknown = null;
+  for (let i = 0; i < pads.length; i++) {
+    try { return await coastalRouteOnce(start, end, opt, pads[i]!, (m) => onProgress(i ? `${m} (wider search)` : m)); }
+    catch (e) {
+      lastErr = e;
+      if (!(e instanceof NoPathError)) throw e;
+    }
+  }
+  throw lastErr instanceof Error ? new RouteError(lastErr.message) : new RouteError('No safe route found.');
+}
+
+class NoPathError extends RouteError {}
+
+async function coastalRouteOnce(start: LatLon, end: LatLon, opt: CoastalOptions, pad: number, onProgress: (msg: string) => void): Promise<CoastalResult> {
   const needM = (opt.draftFt + opt.marginFt) / 3.28084;
 
   // ---- area and grid
-  const padLat = Math.max(0.03, Math.abs(start.lat - end.lat) * 0.3);
-  const padLon = Math.max(0.04, Math.abs(start.lon - end.lon) * 0.3);
+  const padLat = pad;
+  const padLon = pad * 1.3;
   const s = Math.min(start.lat, end.lat) - padLat, n = Math.max(start.lat, end.lat) + padLat;
   const w = Math.min(start.lon, end.lon) - padLon, e = Math.max(start.lon, end.lon) + padLon;
   const midLat = (s + n) / 2;
@@ -186,7 +203,7 @@ export async function coastalRoute(start: LatLon, end: LatLon, opt: CoastalOptio
       if (ng < g[ni]!) { g[ni] = ng; came[ni] = cur; heap.push(ni, ng + h(ni)); }
     }
   }
-  if (!found) throw new RouteError('No safe route found at this draft. The only ways through may be too shallow, or blocked by charted hazards.');
+  if (!found) throw new NoPathError('No safe route found at this draft. The only ways through may be too shallow, or blocked by charted hazards.');
 
   const cells: number[] = []; for (let c = b.idx; c !== -1; c = came[c]!) cells.push(c); cells.reverse();
 
