@@ -250,7 +250,7 @@ map.once('style.load', () => {
   map.addSource('ocean', { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 9, attribution: 'Ocean depth shading: Esri, GEBCO, NOAA, Garmin' });
   map.addLayer({ id: 'ocean', type: 'raster', source: 'ocean', paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 8, 0.9, 12, 0.45, 14, 0.2] } }, firstLabel);
   map.addSource('chart', { type: 'raster', tiles: [NOAA_CHART_WMS], tileSize: 256, minzoom: 6, maxzoom: 19, attribution: 'Chart: NOAA ENC®' });
-  map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 7, paint: { 'raster-fade-duration': 150 }, layout: { visibility: 'visible' } });
+  map.addLayer({ id: 'chart', type: 'raster', source: 'chart', minzoom: 10, paint: { 'raster-fade-duration': 150 }, layout: { visibility: 'visible' } });
   map.addSource('seamarks', { type: 'raster', tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'], tileSize: 256, minzoom: 6, maxzoom: 18, attribution: 'Marks © OpenSeaMap' });
   map.addLayer({ id: 'seamarks', type: 'raster', source: 'seamarks', layout: { visibility: 'none' } });
   map.addSource('places', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
